@@ -1,0 +1,38 @@
+# Dependency directories
+node_modules/
+
+# Environment variables
+.env
+
+# Log files
+*.log
+logs/
+npm-debug.log*
+
+# Output of 'npm pack'
+*.tgz
+
+# Operating System Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Test files
+*.test.js
+coverage/
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+
+# Local token files
+*_token.txt
+*_token_*.txt
+
+# Local json test data files
+*.json 
