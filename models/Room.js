@@ -49,6 +49,14 @@ const RoomSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  isPublic: {
+    type: Boolean,
+    default: true
+  },
+  viewerCount: {
+    type: Number,
+    default: 0
+  },
   description: {
     type: String,
     trim: true,
@@ -111,6 +119,28 @@ const RoomSchema = new mongoose.Schema({
       }
     }
   ],
+  spectators: [
+    {
+      userId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        required: true
+      },
+      isCreator: {
+        type: Boolean,
+        default: false
+      },
+      status: {
+        type: String,
+        enum: ['online', 'offline'],
+        default: 'online'
+      },
+      joinTime: {
+        type: Date,
+        default: Date.now
+      }
+    }
+  ],
   nextTeamPick: {
     type: Number,
     default: null // 下一个选人的队伍ID
@@ -129,12 +159,30 @@ const RoomSchema = new mongoose.Schema({
   }
 });
 
-// 玩家加入时的钩子
+// 玩家加入时的钩子 - 现在用于添加到玩家列表
 RoomSchema.methods.addPlayer = function (userId, isCreator = false) {
-  // 检查玩家是否已经在房间中
+  // 检查玩家是否已经在房间中的玩家列表
   const existingPlayer = this.players.find(p => p.userId.toString() === userId.toString());
   if (existingPlayer) {
     return existingPlayer;
+  }
+
+  // 检查玩家是否在观众席
+  const spectatorIndex = this.spectators.findIndex(s => s.userId.toString() === userId.toString());
+  if (spectatorIndex !== -1) {
+    // 从观众席移到玩家列表
+    const spectator = this.spectators[spectatorIndex];
+    this.spectators.splice(spectatorIndex, 1);
+    
+    const newPlayer = {
+      userId,
+      isCreator: spectator.isCreator || isCreator,
+      status: 'online',
+      joinTime: spectator.joinTime
+    };
+    
+    this.players.push(newPlayer);
+    return newPlayer;
   }
 
   // 检查房间是否已满
@@ -154,12 +202,115 @@ RoomSchema.methods.addPlayer = function (userId, isCreator = false) {
   return newPlayer;
 };
 
+// 添加观众
+RoomSchema.methods.addSpectator = function (userId, isCreator = false) {
+  // 检查用户是否已经在观众席
+  const existingSpectator = this.spectators.find(s => s.userId.toString() === userId.toString());
+  if (existingSpectator) {
+    return existingSpectator;
+  }
+
+  // 检查用户是否在玩家列表
+  const playerIndex = this.players.findIndex(p => p.userId.toString() === userId.toString());
+  if (playerIndex !== -1) {
+    // 从玩家列表移到观众席
+    return this.movePlayerToSpectator(userId);
+  }
+
+  // 添加观众
+  const newSpectator = {
+    userId,
+    isCreator,
+    status: 'online',
+    joinTime: Date.now()
+  };
+
+  this.spectators.push(newSpectator);
+  return newSpectator;
+};
+
+// 将玩家移动到观众席
+RoomSchema.methods.movePlayerToSpectator = function (userId) {
+  const playerIndex = this.players.findIndex(p => p.userId.toString() === userId.toString());
+  if (playerIndex === -1) {
+    throw new Error('该用户不在玩家列表中');
+  }
+
+  const player = this.players[playerIndex];
+  this.players.splice(playerIndex, 1);
+
+  const newSpectator = {
+    userId: player.userId,
+    isCreator: player.isCreator,
+    status: 'online',
+    joinTime: player.joinTime
+  };
+
+  this.spectators.push(newSpectator);
+  
+  // 如果是队长，需要移除队长身份
+  if (player.isCaptain) {
+    const teamIndex = this.teams.findIndex(t => t.captainId && t.captainId.toString() === player.userId.toString());
+    if (teamIndex !== -1) {
+      this.teams[teamIndex].captainId = null;
+    }
+  }
+  
+  // 如果是创建者且在玩家列表中还有其他人，需要转移创建者权限
+  if (player.isCreator && this.players.length > 0) {
+    // 找到加入时间最早的玩家
+    const earliestPlayer = this.players.reduce((earliest, p) => {
+      return p.joinTime < earliest.joinTime ? p : earliest;
+    }, this.players[0]);
+    
+    // 转移创建者权限
+    earliestPlayer.isCreator = true;
+    this.creatorId = earliestPlayer.userId;
+  }
+  
+  return newSpectator;
+};
+
+// 将观众移动到玩家列表
+RoomSchema.methods.moveSpectatorToPlayer = function (userId) {
+  const spectatorIndex = this.spectators.findIndex(s => s.userId.toString() === userId.toString());
+  if (spectatorIndex === -1) {
+    throw new Error('该用户不在观众席中');
+  }
+
+  // 检查玩家列表是否已满
+  if (this.players.length >= this.playerCount) {
+    throw new Error('玩家列表已满');
+  }
+
+  const spectator = this.spectators[spectatorIndex];
+  this.spectators.splice(spectatorIndex, 1);
+
+  const newPlayer = {
+    userId: spectator.userId,
+    isCreator: spectator.isCreator,
+    status: 'online',
+    joinTime: spectator.joinTime
+  };
+
+  this.players.push(newPlayer);
+  return newPlayer;
+};
+
 // 玩家离开的方法
 RoomSchema.methods.removePlayer = function (userId) {
   const initialLength = this.players.length;
   this.players = this.players.filter(p => p.userId.toString() !== userId.toString());
   
   return initialLength !== this.players.length;
+};
+
+// 观众离开的方法
+RoomSchema.methods.removeSpectator = function (userId) {
+  const initialLength = this.spectators.length;
+  this.spectators = this.spectators.filter(s => s.userId.toString() !== userId.toString());
+  
+  return initialLength !== this.spectators.length;
 };
 
 // 设置密码
@@ -401,6 +552,44 @@ RoomSchema.methods.selectSide = function (teamId, side) {
 RoomSchema.methods.endGame = function () {
   this.status = 'ended';
   this.endTime = Date.now();
+};
+
+// 从房间中移除用户（玩家或观众）
+RoomSchema.methods.removeUser = function (userId) {
+  // 检查用户是否在玩家列表中
+  const playerIndex = this.players.findIndex(p => p.userId.toString() === userId.toString());
+  
+  if (playerIndex !== -1) {
+    // 玩家离开
+    const player = this.players[playerIndex];
+    const isCreator = player.isCreator;
+    this.players.splice(playerIndex, 1);
+    
+    return {
+      user: player,
+      isCreator,
+      type: 'player'
+    };
+  }
+  
+  // 检查用户是否在观众席中
+  const spectatorIndex = this.spectators.findIndex(s => s.userId.toString() === userId.toString());
+  
+  if (spectatorIndex !== -1) {
+    // 观众离开
+    const spectator = this.spectators[spectatorIndex];
+    const isCreator = spectator.isCreator;
+    this.spectators.splice(spectatorIndex, 1);
+    
+    return {
+      user: spectator,
+      isCreator,
+      type: 'spectator'
+    };
+  }
+  
+  // 用户不在房间中
+  return null;
 };
 
 // 转换为JSON时的配置

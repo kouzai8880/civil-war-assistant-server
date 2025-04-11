@@ -59,23 +59,29 @@ exports.register = asyncHandler(async (req, res) => {
 
 // 用户登录
 exports.login = asyncHandler(async (req, res) => {
-  const { email, password } = req.body;
+  const { username, email, password } = req.body;
 
-  // 检查是否提供了邮箱和密码
-  if (!email || !password) {
+  // 检查是否提供了用户凭证和密码
+  if ((!username && !email) || !password) {
     return res.status(400).json({
       status: 'error',
-      message: '请提供邮箱和密码',
+      message: '请提供用户名或邮箱，以及密码',
       code: 1002
     });
   }
 
-  // 查找用户
-  const user = await User.findOne({ email }).select('+password');
+  // 查找用户（可以用用户名或邮箱）
+  let user;
+  if (email) {
+    user = await User.findOne({ email }).select('+password');
+  } else {
+    user = await User.findOne({ username }).select('+password');
+  }
+
   if (!user) {
     return res.status(401).json({
       status: 'error',
-      message: '邮箱或密码错误',
+      message: '用户名/邮箱或密码错误',
       code: 1003
     });
   }
@@ -85,21 +91,40 @@ exports.login = asyncHandler(async (req, res) => {
   if (!isMatch) {
     return res.status(401).json({
       status: 'error',
-      message: '邮箱或密码错误',
+      message: '用户名/邮箱或密码错误',
       code: 1003
     });
   }
+
+  // 更新最后登录时间
+  user.lastLoginTime = Date.now();
+  await user.save();
+
+  // 格式化统计数据
+  const stats = {
+    ...user.stats,
+    winRate: user.getWinRate()
+  };
 
   // 生成 JWT token
   const token = user.getSignedJwtToken();
   res.status(200).json({
     status: 'success',
-    token,
-    user: {
-      id: user._id,
-      username: user.username,
-      email: user.email,
-      gameId: user.gameId
+    data: {
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        gameId: user.gameId,
+        level: user.level,
+        points: user.points,
+        avatar: user.avatar,
+        settings: user.settings,
+        createTime: user.createTime,
+        lastLoginTime: user.lastLoginTime,
+        stats
+      }
     }
   });
 });
@@ -107,13 +132,29 @@ exports.login = asyncHandler(async (req, res) => {
 // 获取当前用户信息
 exports.getMe = asyncHandler(async (req, res) => {
   const user = await User.findById(req.user.id);
+  
+  // 格式化统计数据
+  const stats = {
+    ...user.stats,
+    winRate: user.getWinRate()
+  };
+  
   res.status(200).json({
     status: 'success',
-    user: {
-      id: user._id,
-      username: user.username,
-      email: user.email,
-      gameId: user.gameId
+    data: {
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        gameId: user.gameId,
+        level: user.level,
+        points: user.points,
+        avatar: user.avatar,
+        settings: user.settings,
+        createTime: user.createTime,
+        lastLoginTime: user.lastLoginTime,
+        stats
+      }
     }
   });
 });

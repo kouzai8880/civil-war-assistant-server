@@ -142,7 +142,7 @@ app.use((req, res) => {
 });
 
 // 数据库连接
-mongoose.connect(process.env.MONGO_URI || 'mongodb://root:r7s7dhr7@civil-war-assistant-db-mongodb.ns-pdcg8wzg.svc:27017')
+mongoose.connect(process.env.MONGO_URI || 'mongodb://root:r7s7dhr7@civil-war-assistant-db-95d80a-mongodb.ns-pdcg8wzg.svc:27017')
   .then(() => {
     console.log('MongoDB 连接成功');
     

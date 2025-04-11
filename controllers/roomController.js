@@ -13,7 +13,7 @@ const socketHelper = require('../utils/socketHelper');
 // 创建房间
 exports.createRoom = asyncHandler(async (req, res) => {
   const userId = req.user.id;
-  const { name, playerCount, gameType, teamCount, pickMode, password, description } = req.body;
+  const { name, playerCount, gameType, teamCount, pickMode, password, description, isPublic } = req.body;
   
   // 检查必要字段
   if (!name || !playerCount) {
@@ -32,7 +32,8 @@ exports.createRoom = asyncHandler(async (req, res) => {
     gameType: gameType || 'LOL',
     teamCount: teamCount || 2,
     pickMode: pickMode || 'random',
-    description
+    description,
+    isPublic: isPublic !== undefined ? isPublic : true
   });
   
   // 设置密码（如果有）
@@ -56,6 +57,7 @@ exports.createRoom = asyncHandler(async (req, res) => {
     teamCount: room.teamCount,
     pickMode: room.pickMode,
     hasPassword: room.hasPassword,
+    isPublic: room.isPublic,
     description: room.description,
     status: room.status,
     players: room.players.map(player => ({
@@ -64,6 +66,8 @@ exports.createRoom = asyncHandler(async (req, res) => {
       status: player.status,
       joinTime: player.joinTime
     })),
+    spectators: [],
+    teams: [],
     createTime: room.createTime
   };
   
@@ -76,7 +80,14 @@ exports.createRoom = asyncHandler(async (req, res) => {
 
 // 获取房间列表
 exports.getRooms = asyncHandler(async (req, res) => {
-  const { status, gameType, page = 1, limit = 20, search } = req.query;
+  const { 
+    status, 
+    gameType, 
+    playerCount, 
+    keyword, 
+    page = 1, 
+    limit = 20 
+  } = req.query;
   
   // 构建查询条件
   const query = {};
@@ -92,34 +103,118 @@ exports.getRooms = asyncHandler(async (req, res) => {
     query.gameType = gameType;
   }
   
-  if (search) {
-    query.name = { $regex: search, $options: 'i' };
+  if (playerCount) {
+    query.playerCount = parseInt(playerCount);
+  }
+  
+  if (keyword) {
+    // 同时搜索房间名和创建者名
+    query.$or = [
+      { name: { $regex: keyword, $options: 'i' } }
+    ];
   }
   
   // 计算总数
   const total = await Room.countDocuments(query);
   
-  // 查询房间列表
+  // 查询房间列表，增加对玩家和观众信息的填充
   const rooms = await Room.find(query)
     .sort({ createTime: -1 })
     .skip((parseInt(page) - 1) * parseInt(limit))
     .limit(parseInt(limit))
-    .populate('creatorId', 'username avatar');
+    .populate('creatorId', 'username avatar')
+    .populate('players.userId', 'username avatar stats.totalGames stats.wins gameId')
+    .populate('spectators.userId', 'username avatar stats.totalGames stats.wins gameId');
   
   // 格式化响应数据
-  const formattedRooms = rooms.map(room => ({
-    id: room._id,
-    name: room.name,
-    creatorId: room.creatorId._id,
-    creatorName: room.creatorId.username,
-    creatorAvatar: room.creatorId.avatar,
-    gameType: room.gameType,
-    playerCount: room.playerCount,
-    currentPlayers: room.players.length,
-    status: room.status,
-    hasPassword: room.hasPassword,
-    createTime: room.createTime
-  }));
+  const formattedRooms = rooms.map(room => {
+    // 获取在线状态
+    const onlineStatus = {};
+    
+    if (socketHelper) {
+      try {
+        const onlineUsers = socketHelper.safeGetRoomOnlineUsers(room._id);
+        room.players.forEach(player => {
+          onlineStatus[player.userId._id] = onlineUsers.includes(player.userId._id.toString());
+        });
+        room.spectators.forEach(spectator => {
+          onlineStatus[spectator.userId._id] = onlineUsers.includes(spectator.userId._id.toString());
+        });
+      } catch (error) {
+        console.error('获取在线用户状态失败:', error);
+        // 默认所有用户在线
+        room.players.forEach(player => {
+          onlineStatus[player.userId._id] = true;
+        });
+        room.spectators.forEach(spectator => {
+          onlineStatus[spectator.userId._id] = true;
+        });
+      }
+    } else {
+      // socketHelper不可用，默认所有用户在线
+      room.players.forEach(player => {
+        onlineStatus[player.userId._id] = true;
+      });
+      room.spectators.forEach(spectator => {
+        onlineStatus[spectator.userId._id] = true;
+      });
+    }
+    
+    // 格式化玩家数据
+    const players = room.players.map(player => {
+      const user = player.userId;
+      return {
+        userId: user._id,
+        username: user.username,
+        avatar: user.avatar,
+        gameId: user.gameId,
+        totalGames: user.stats ? user.stats.totalGames : 0,
+        wins: user.stats ? user.stats.wins : 0,
+        teamId: player.teamId,
+        isCaptain: player.isCaptain,
+        isCreator: player.isCreator,
+        status: onlineStatus[user._id] ? player.status : 'offline',
+        joinTime: player.joinTime
+      };
+    });
+    
+    // 格式化观众数据
+    const spectators = room.spectators.map(spectator => {
+      const user = spectator.userId;
+      return {
+        userId: user._id,
+        username: user.username,
+        avatar: user.avatar,
+        gameId: user.gameId,
+        totalGames: user.stats ? user.stats.totalGames : 0,
+        wins: user.stats ? user.stats.wins : 0,
+        isCreator: spectator.isCreator,
+        status: onlineStatus[user._id] ? spectator.status : 'offline',
+        joinTime: spectator.joinTime
+      };
+    });
+    
+    return {
+      id: room._id,
+      name: room.name,
+      creatorId: room.creatorId._id,
+      creatorName: room.creatorId.username,
+      creatorAvatar: room.creatorId.avatar,
+      gameType: room.gameType,
+      playerCount: room.playerCount,
+      currentPlayers: room.players.length,
+      viewerCount: room.spectators.length,
+      status: room.status,
+      hasPassword: room.hasPassword,
+      isPublic: room.isPublic,
+      pickMode: room.pickMode,
+      description: room.description,
+      createTime: room.createTime,
+      players: players,
+      spectators: spectators,
+      teams: room.teams
+    };
+  });
   
   res.status(200).json({
     status: 'success',
@@ -139,6 +234,7 @@ exports.getRoom = asyncHandler(async (req, res) => {
   const room = await Room.findById(roomId)
     .populate('creatorId', 'username avatar')
     .populate('players.userId', 'username avatar stats.totalGames stats.wins gameId')
+    .populate('spectators.userId', 'username avatar stats.totalGames stats.wins gameId')
     .populate('teams.captainId', 'username avatar');
   
   if (!room) {
@@ -158,17 +254,26 @@ exports.getRoom = asyncHandler(async (req, res) => {
       room.players.forEach(player => {
         onlineStatus[player.userId._id] = onlineUsers.includes(player.userId._id.toString());
       });
+      room.spectators.forEach(spectator => {
+        onlineStatus[spectator.userId._id] = onlineUsers.includes(spectator.userId._id.toString());
+      });
     } catch (error) {
       console.error('获取在线用户状态失败:', error);
       // 默认所有用户在线
       room.players.forEach(player => {
         onlineStatus[player.userId._id] = true;
       });
+      room.spectators.forEach(spectator => {
+        onlineStatus[spectator.userId._id] = true;
+      });
     }
   } else {
     // socketHelper不可用，默认所有用户在线
     room.players.forEach(player => {
       onlineStatus[player.userId._id] = true;
+    });
+    room.spectators.forEach(spectator => {
+      onlineStatus[spectator.userId._id] = true;
     });
   }
   
@@ -190,6 +295,22 @@ exports.getRoom = asyncHandler(async (req, res) => {
     };
   });
   
+  // 格式化观众数据
+  const spectators = room.spectators.map(spectator => {
+    const user = spectator.userId;
+    return {
+      userId: user._id,
+      username: user.username,
+      avatar: user.avatar,
+      gameId: user.gameId,
+      totalGames: user.stats ? user.stats.totalGames : 0,
+      wins: user.stats ? user.stats.wins : 0,
+      isCreator: spectator.isCreator,
+      status: onlineStatus[user._id] ? spectator.status : 'offline',
+      joinTime: spectator.joinTime
+    };
+  });
+  
   // 格式化响应数据
   const formattedRoom = {
     id: room._id,
@@ -205,6 +326,7 @@ exports.getRoom = asyncHandler(async (req, res) => {
     description: room.description,
     status: room.status,
     players,
+    spectators,
     teams: room.teams,
     nextTeamPick: room.nextTeamPick,
     createTime: room.createTime,
@@ -235,24 +357,6 @@ exports.joinRoom = asyncHandler(async (req, res) => {
     });
   }
   
-  // 检查房间是否已满
-  if (room.players.length >= room.playerCount) {
-    return res.status(400).json({
-      status: 'error',
-      message: '房间已满',
-      code: 3002
-    });
-  }
-  
-  // 检查房间状态
-  if (room.status !== 'waiting') {
-    return res.status(400).json({
-      status: 'error',
-      message: '房间已经开始游戏，无法加入',
-      code: 3003
-    });
-  }
-  
   // 验证密码
   if (room.hasPassword) {
     const isValid = await room.verifyPassword(password);
@@ -266,39 +370,145 @@ exports.joinRoom = asyncHandler(async (req, res) => {
     }
   }
   
-  // 添加玩家到房间
+  // 添加用户到观众席
   try {
-    room.addPlayer(userId);
+    // 检查用户是否已经在房间中（玩家列表或观众席）
+    const existingPlayer = room.players.find(p => p.userId.toString() === userId);
+    const existingSpectator = room.spectators.find(s => s.userId.toString() === userId);
+    
+    if (existingPlayer || existingSpectator) {
+      return res.status(400).json({
+        status: 'error',
+        message: '您已经在房间中',
+        code: 3005
+      });
+    }
+    
+    const isCreator = !room.players.length && !room.spectators.length;
+    const spectator = room.addSpectator(userId, isCreator);
+    
+    // 如果是创建者，更新房间的creatorId
+    if (isCreator) {
+      room.creatorId = userId;
+    }
+    
     await room.save();
     
     // 获取用户信息
     const user = await User.findById(userId, 'username avatar stats.totalGames stats.wins gameId');
     
-    // 通知房间内其他玩家
+    // 通知房间内其他用户
     if (socketHelper) {
-      socketHelper.safeNotifyRoom(roomId, 'player.joined', {
+      socketHelper.safeNotifyRoom(roomId, 'spectator.joined', {
         userId: user._id,
         username: user.username,
         avatar: user.avatar,
         totalGames: user.stats.totalGames,
-        wins: user.stats.wins
+        wins: user.stats.wins,
+        isCreator: spectator.isCreator
       });
     }
     
+    // 获取更新后的房间详情
+    const updatedRoom = await Room.findById(roomId)
+      .populate('creatorId', 'username avatar')
+      .populate('players.userId', 'username avatar stats.totalGames stats.wins gameId')
+      .populate('spectators.userId', 'username avatar stats.totalGames stats.wins gameId')
+      .populate('teams.captainId', 'username avatar');
+    
+    // 获取在线状态
+    const onlineStatus = {};
+    
+    if (socketHelper) {
+      try {
+        const onlineUsers = socketHelper.safeGetRoomOnlineUsers(roomId);
+        updatedRoom.players.forEach(player => {
+          onlineStatus[player.userId._id] = onlineUsers.includes(player.userId._id.toString());
+        });
+        updatedRoom.spectators.forEach(spectator => {
+          onlineStatus[spectator.userId._id] = onlineUsers.includes(spectator.userId._id.toString());
+        });
+      } catch (error) {
+        console.error('获取在线用户状态失败:', error);
+        // 默认所有用户在线
+        updatedRoom.players.forEach(player => {
+          onlineStatus[player.userId._id] = true;
+        });
+        updatedRoom.spectators.forEach(spectator => {
+          onlineStatus[spectator.userId._id] = true;
+        });
+      }
+    } else {
+      // socketHelper不可用，默认所有用户在线
+      updatedRoom.players.forEach(player => {
+        onlineStatus[player.userId._id] = true;
+      });
+      updatedRoom.spectators.forEach(spectator => {
+        onlineStatus[spectator.userId._id] = true;
+      });
+    }
+    
+    // 格式化玩家数据
+    const players = updatedRoom.players.map(player => {
+      const user = player.userId;
+      return {
+        userId: user._id,
+        username: user.username,
+        avatar: user.avatar,
+        gameId: user.gameId,
+        totalGames: user.stats ? user.stats.totalGames : 0,
+        wins: user.stats ? user.stats.wins : 0,
+        teamId: player.teamId,
+        isCaptain: player.isCaptain,
+        isCreator: player.isCreator,
+        status: onlineStatus[user._id] ? player.status : 'offline',
+        joinTime: player.joinTime
+      };
+    });
+    
+    // 格式化观众数据
+    const spectators = updatedRoom.spectators.map(spectator => {
+      const user = spectator.userId;
+      return {
+        userId: user._id,
+        username: user.username,
+        avatar: user.avatar,
+        gameId: user.gameId,
+        totalGames: user.stats ? user.stats.totalGames : 0,
+        wins: user.stats ? user.stats.wins : 0,
+        isCreator: spectator.isCreator,
+        status: onlineStatus[user._id] ? spectator.status : 'offline',
+        joinTime: spectator.joinTime
+      };
+    });
+    
+    // 格式化响应数据
+    const formattedRoom = {
+      id: updatedRoom._id,
+      name: updatedRoom.name,
+      creatorId: updatedRoom.creatorId._id,
+      creatorName: updatedRoom.creatorId.username,
+      creatorAvatar: updatedRoom.creatorId.avatar,
+      gameType: updatedRoom.gameType,
+      playerCount: updatedRoom.playerCount,
+      teamCount: updatedRoom.teamCount,
+      pickMode: updatedRoom.pickMode,
+      hasPassword: updatedRoom.hasPassword,
+      description: updatedRoom.description,
+      status: updatedRoom.status,
+      players,
+      spectators,
+      teams: updatedRoom.teams,
+      nextTeamPick: updatedRoom.nextTeamPick,
+      createTime: updatedRoom.createTime,
+      startTime: updatedRoom.startTime,
+      endTime: updatedRoom.endTime
+    };
+    
     res.status(200).json({
       status: 'success',
-      data: {
-        roomId: room._id,
-        player: {
-          userId: user._id,
-          username: user.username,
-          avatar: user.avatar,
-          teamId: null,
-          status: 'online',
-          joinTime: Date.now()
-        }
-      },
-      message: '加入房间成功'
+      data: { room: formattedRoom },
+      message: '加入房间成功，已进入观众席'
     });
   } catch (error) {
     return res.status(400).json({
@@ -327,8 +537,9 @@ exports.leaveRoom = asyncHandler(async (req, res) => {
   
   // 检查用户是否在房间中
   const playerIndex = room.players.findIndex(p => p.userId.toString() === userId);
+  const spectatorIndex = room.spectators.findIndex(s => s.userId.toString() === userId);
   
-  if (playerIndex === -1) {
+  if (playerIndex === -1 && spectatorIndex === -1) {
     return res.status(400).json({
       status: 'error',
       message: '您不在该房间中',
@@ -336,35 +547,62 @@ exports.leaveRoom = asyncHandler(async (req, res) => {
     });
   }
   
-  // 检查房间状态
-  if (room.status === 'gaming') {
+  // 检查房间状态和用户是否在玩家列表中
+  if (room.status === 'gaming' && playerIndex !== -1) {
     return res.status(400).json({
       status: 'error',
-      message: '游戏进行中，无法离开',
+      message: '游戏进行中，玩家无法离开',
       code: 3003
     });
   }
   
-  // 判断是否是房主
-  const isCreator = room.players[playerIndex].isCreator;
+  let isCreator = false;
   
-  // 从房间移除玩家
-  room.players.splice(playerIndex, 1);
-  
-  // 如果是房主且还有其他玩家，转移房主权限
-  if (isCreator && room.players.length > 0) {
-    // 找到加入时间最早的玩家
-    const earliestPlayer = room.players.reduce((earliest, player) => {
-      return player.joinTime < earliest.joinTime ? player : earliest;
-    }, room.players[0]);
+  // 处理离开的逻辑
+  if (playerIndex !== -1) {
+    // 玩家离开
+    isCreator = room.players[playerIndex].isCreator;
+    room.players.splice(playerIndex, 1);
     
-    // 转移房主权限
-    earliestPlayer.isCreator = true;
-    room.creatorId = earliestPlayer.userId;
+    // 通知类型
+    leaveType = 'player';
+  } else {
+    // 观众离开
+    isCreator = room.spectators[spectatorIndex].isCreator;
+    room.spectators.splice(spectatorIndex, 1);
+    
+    // 通知类型
+    leaveType = 'spectator';
   }
   
-  // 如果房间没有玩家了，删除房间
-  if (room.players.length === 0) {
+  // 如果是房主且还有其他人，转移房主权限
+  if (isCreator) {
+    // 首先检查玩家列表
+    if (room.players.length > 0) {
+      // 找到加入时间最早的玩家
+      const earliestPlayer = room.players.reduce((earliest, player) => {
+        return player.joinTime < earliest.joinTime ? player : earliest;
+      }, room.players[0]);
+      
+      // 转移房主权限
+      earliestPlayer.isCreator = true;
+      room.creatorId = earliestPlayer.userId;
+    } 
+    // 然后检查观众席
+    else if (room.spectators.length > 0) {
+      // 找到加入时间最早的观众
+      const earliestSpectator = room.spectators.reduce((earliest, spectator) => {
+        return spectator.joinTime < earliest.joinTime ? spectator : earliest;
+      }, room.spectators[0]);
+      
+      // 转移房主权限
+      earliestSpectator.isCreator = true;
+      room.creatorId = earliestSpectator.userId;
+    }
+  }
+  
+  // 如果房间没有玩家和观众了，删除房间
+  if (room.players.length === 0 && room.spectators.length === 0) {
     await Room.deleteOne({ _id: roomId });
     
     res.status(200).json({
@@ -375,9 +613,9 @@ exports.leaveRoom = asyncHandler(async (req, res) => {
     // 保存房间
     await room.save();
     
-    // 通知房间内其他玩家
+    // 通知房间内其他人
     if (socketHelper) {
-      socketHelper.safeNotifyRoom(roomId, 'player.left', {
+      socketHelper.safeNotifyRoom(roomId, `${leaveType}.left`, {
         userId,
         newCreatorId: isCreator ? room.creatorId : null
       });
@@ -990,5 +1228,459 @@ exports.inviteFriends = asyncHandler(async (req, res) => {
       failed: failedInvitations
     },
     message: `成功邀请 ${newInvitations.length} 名好友，${failedInvitations.length} 名好友邀请失败`
+  });
+});
+
+// 从观众席加入玩家列表
+exports.joinAsPlayer = asyncHandler(async (req, res) => {
+  const roomId = req.params.roomId;
+  const userId = req.user.id;
+  
+  // 查找房间
+  const room = await Room.findById(roomId);
+  
+  if (!room) {
+    return res.status(404).json({
+      status: 'error',
+      message: '房间不存在',
+      code: 3001
+    });
+  }
+  
+  // 检查房间状态
+  if (room.status !== 'waiting') {
+    return res.status(400).json({
+      status: 'error',
+      message: '房间已经开始游戏，无法加入玩家列表',
+      code: 3003
+    });
+  }
+  
+  // 检查玩家列表是否已满
+  if (room.players.length >= room.playerCount) {
+    return res.status(400).json({
+      status: 'error',
+      message: '玩家列表已满',
+      code: 3002
+    });
+  }
+  
+  // 检查用户是否在观众席中
+  const spectatorIndex = room.spectators.findIndex(s => s.userId.toString() === userId);
+  if (spectatorIndex === -1) {
+    return res.status(400).json({
+      status: 'error',
+      message: '您不在该房间的观众席中',
+      code: 3006
+    });
+  }
+  
+  try {
+    // 将用户从观众席移动到玩家列表
+    const player = room.moveSpectatorToPlayer(userId);
+    await room.save();
+    
+    // 获取用户信息
+    const user = await User.findById(userId, 'username avatar stats.totalGames stats.wins gameId');
+    
+    // 通知房间内其他用户
+    if (socketHelper) {
+      socketHelper.safeNotifyRoom(roomId, 'player.joined', {
+        userId: user._id,
+        username: user.username,
+        avatar: user.avatar,
+        totalGames: user.stats.totalGames,
+        wins: user.stats.wins,
+        isCreator: player.isCreator
+      });
+      
+      socketHelper.safeNotifyRoom(roomId, 'spectator.left', {
+        userId: user._id,
+        username: user.username
+      });
+    }
+    
+    // 获取更新后的房间详情
+    const updatedRoom = await Room.findById(roomId)
+      .populate('creatorId', 'username avatar')
+      .populate('players.userId', 'username avatar stats.totalGames stats.wins gameId')
+      .populate('spectators.userId', 'username avatar stats.totalGames stats.wins gameId')
+      .populate('teams.captainId', 'username avatar');
+    
+    // 获取在线状态
+    const onlineStatus = {};
+    
+    if (socketHelper) {
+      try {
+        const onlineUsers = socketHelper.safeGetRoomOnlineUsers(roomId);
+        updatedRoom.players.forEach(player => {
+          onlineStatus[player.userId._id] = onlineUsers.includes(player.userId._id.toString());
+        });
+        updatedRoom.spectators.forEach(spectator => {
+          onlineStatus[spectator.userId._id] = onlineUsers.includes(spectator.userId._id.toString());
+        });
+      } catch (error) {
+        console.error('获取在线用户状态失败:', error);
+        // 默认所有用户在线
+        updatedRoom.players.forEach(player => {
+          onlineStatus[player.userId._id] = true;
+        });
+        updatedRoom.spectators.forEach(spectator => {
+          onlineStatus[spectator.userId._id] = true;
+        });
+      }
+    } else {
+      // socketHelper不可用，默认所有用户在线
+      updatedRoom.players.forEach(player => {
+        onlineStatus[player.userId._id] = true;
+      });
+      updatedRoom.spectators.forEach(spectator => {
+        onlineStatus[spectator.userId._id] = true;
+      });
+    }
+    
+    // 格式化玩家数据
+    const players = updatedRoom.players.map(player => {
+      const user = player.userId;
+      return {
+        userId: user._id,
+        username: user.username,
+        avatar: user.avatar,
+        gameId: user.gameId,
+        totalGames: user.stats ? user.stats.totalGames : 0,
+        wins: user.stats ? user.stats.wins : 0,
+        teamId: player.teamId,
+        isCaptain: player.isCaptain,
+        isCreator: player.isCreator,
+        status: onlineStatus[user._id] ? player.status : 'offline',
+        joinTime: player.joinTime
+      };
+    });
+    
+    // 格式化观众数据
+    const spectators = updatedRoom.spectators.map(spectator => {
+      const user = spectator.userId;
+      return {
+        userId: user._id,
+        username: user.username,
+        avatar: user.avatar,
+        gameId: user.gameId,
+        totalGames: user.stats ? user.stats.totalGames : 0,
+        wins: user.stats ? user.stats.wins : 0,
+        isCreator: spectator.isCreator,
+        status: onlineStatus[user._id] ? spectator.status : 'offline',
+        joinTime: spectator.joinTime
+      };
+    });
+    
+    // 格式化响应数据
+    const formattedRoom = {
+      id: updatedRoom._id,
+      name: updatedRoom.name,
+      creatorId: updatedRoom.creatorId._id,
+      creatorName: updatedRoom.creatorId.username,
+      creatorAvatar: updatedRoom.creatorId.avatar,
+      gameType: updatedRoom.gameType,
+      playerCount: updatedRoom.playerCount,
+      teamCount: updatedRoom.teamCount,
+      pickMode: updatedRoom.pickMode,
+      hasPassword: updatedRoom.hasPassword,
+      description: updatedRoom.description,
+      status: updatedRoom.status,
+      players,
+      spectators,
+      teams: updatedRoom.teams,
+      nextTeamPick: updatedRoom.nextTeamPick,
+      createTime: updatedRoom.createTime,
+      startTime: updatedRoom.startTime,
+      endTime: updatedRoom.endTime
+    };
+    
+    res.status(200).json({
+      status: 'success',
+      data: { room: formattedRoom },
+      message: '已从观众席加入玩家列表'
+    });
+  } catch (error) {
+    return res.status(400).json({
+      status: 'error',
+      message: error.message,
+      code: 3007
+    });
+  }
+});
+
+// 从玩家列表进入观众席
+exports.joinAsSpectator = asyncHandler(async (req, res) => {
+  const roomId = req.params.roomId;
+  const userId = req.user.id;
+  
+  // 查找房间
+  const room = await Room.findById(roomId);
+  
+  if (!room) {
+    return res.status(404).json({
+      status: 'error',
+      message: '房间不存在',
+      code: 3001
+    });
+  }
+  
+  // 检查房间状态
+  if (room.status === 'gaming') {
+    return res.status(400).json({
+      status: 'error',
+      message: '游戏进行中，玩家无法离开',
+      code: 3003
+    });
+  }
+  
+  // 检查用户是否在玩家列表中
+  const playerIndex = room.players.findIndex(p => p.userId.toString() === userId);
+  if (playerIndex === -1) {
+    return res.status(400).json({
+      status: 'error',
+      message: '您不在该房间的玩家列表中',
+      code: 3006
+    });
+  }
+  
+  try {
+    // 将用户从玩家列表移动到观众席
+    const spectator = room.movePlayerToSpectator(userId);
+    await room.save();
+    
+    // 获取用户信息
+    const user = await User.findById(userId, 'username avatar stats.totalGames stats.wins gameId');
+    
+    // 通知房间内其他用户
+    if (socketHelper) {
+      socketHelper.safeNotifyRoom(roomId, 'spectator.joined', {
+        userId: user._id,
+        username: user.username,
+        avatar: user.avatar,
+        totalGames: user.stats.totalGames,
+        wins: user.stats.wins,
+        isCreator: spectator.isCreator
+      });
+      
+      socketHelper.safeNotifyRoom(roomId, 'player.left', {
+        userId: user._id,
+        username: user.username
+      });
+    }
+    
+    // 获取更新后的房间详情
+    const updatedRoom = await Room.findById(roomId)
+      .populate('creatorId', 'username avatar')
+      .populate('players.userId', 'username avatar stats.totalGames stats.wins gameId')
+      .populate('spectators.userId', 'username avatar stats.totalGames stats.wins gameId')
+      .populate('teams.captainId', 'username avatar');
+    
+    // 获取在线状态
+    const onlineStatus = {};
+    
+    if (socketHelper) {
+      try {
+        const onlineUsers = socketHelper.safeGetRoomOnlineUsers(roomId);
+        updatedRoom.players.forEach(player => {
+          onlineStatus[player.userId._id] = onlineUsers.includes(player.userId._id.toString());
+        });
+        updatedRoom.spectators.forEach(spectator => {
+          onlineStatus[spectator.userId._id] = onlineUsers.includes(spectator.userId._id.toString());
+        });
+      } catch (error) {
+        console.error('获取在线用户状态失败:', error);
+        // 默认所有用户在线
+        updatedRoom.players.forEach(player => {
+          onlineStatus[player.userId._id] = true;
+        });
+        updatedRoom.spectators.forEach(spectator => {
+          onlineStatus[spectator.userId._id] = true;
+        });
+      }
+    } else {
+      // socketHelper不可用，默认所有用户在线
+      updatedRoom.players.forEach(player => {
+        onlineStatus[player.userId._id] = true;
+      });
+      updatedRoom.spectators.forEach(spectator => {
+        onlineStatus[spectator.userId._id] = true;
+      });
+    }
+    
+    // 格式化玩家数据
+    const players = updatedRoom.players.map(player => {
+      const user = player.userId;
+      return {
+        userId: user._id,
+        username: user.username,
+        avatar: user.avatar,
+        gameId: user.gameId,
+        totalGames: user.stats ? user.stats.totalGames : 0,
+        wins: user.stats ? user.stats.wins : 0,
+        teamId: player.teamId,
+        isCaptain: player.isCaptain,
+        isCreator: player.isCreator,
+        status: onlineStatus[user._id] ? player.status : 'offline',
+        joinTime: player.joinTime
+      };
+    });
+    
+    // 格式化观众数据
+    const spectators = updatedRoom.spectators.map(spectator => {
+      const user = spectator.userId;
+      return {
+        userId: user._id,
+        username: user.username,
+        avatar: user.avatar,
+        gameId: user.gameId,
+        totalGames: user.stats ? user.stats.totalGames : 0,
+        wins: user.stats ? user.stats.wins : 0,
+        isCreator: spectator.isCreator,
+        status: onlineStatus[user._id] ? spectator.status : 'offline',
+        joinTime: spectator.joinTime
+      };
+    });
+    
+    // 格式化响应数据
+    const formattedRoom = {
+      id: updatedRoom._id,
+      name: updatedRoom.name,
+      creatorId: updatedRoom.creatorId._id,
+      creatorName: updatedRoom.creatorId.username,
+      creatorAvatar: updatedRoom.creatorId.avatar,
+      gameType: updatedRoom.gameType,
+      playerCount: updatedRoom.playerCount,
+      teamCount: updatedRoom.teamCount,
+      pickMode: updatedRoom.pickMode,
+      hasPassword: updatedRoom.hasPassword,
+      description: updatedRoom.description,
+      status: updatedRoom.status,
+      players,
+      spectators,
+      teams: updatedRoom.teams,
+      nextTeamPick: updatedRoom.nextTeamPick,
+      createTime: updatedRoom.createTime,
+      startTime: updatedRoom.startTime,
+      endTime: updatedRoom.endTime
+    };
+    
+    res.status(200).json({
+      status: 'success',
+      data: { room: formattedRoom },
+      message: '已从玩家列表进入观众席'
+    });
+  } catch (error) {
+    return res.status(400).json({
+      status: 'error',
+      message: error.message,
+      code: 3007
+    });
+  }
+});
+
+// 踢出玩家
+exports.kickPlayer = asyncHandler(async (req, res) => {
+  const roomId = req.params.roomId;
+  const userId = req.user.id;
+  const { targetUserId } = req.body;
+  
+  // 检查必要字段
+  if (!targetUserId) {
+    return res.status(400).json({
+      status: 'error',
+      message: '请提供要踢出的用户ID',
+      code: 1001
+    });
+  }
+  
+  // 查找房间
+  const room = await Room.findById(roomId);
+  
+  if (!room) {
+    return res.status(404).json({
+      status: 'error',
+      message: '房间不存在',
+      code: 3001
+    });
+  }
+  
+  // 检查是否是房主
+  if (room.creatorId.toString() !== userId) {
+    return res.status(403).json({
+      status: 'error',
+      message: '只有房主可以踢出玩家',
+      code: 1003
+    });
+  }
+  
+  // 检查目标用户是否在房间中
+  const playerIndex = room.players.findIndex(p => p.userId.toString() === targetUserId);
+  const spectatorIndex = room.spectators.findIndex(s => s.userId.toString() === targetUserId);
+  
+  if (playerIndex === -1 && spectatorIndex === -1) {
+    return res.status(400).json({
+      status: 'error',
+      message: '该用户不在房间中',
+      code: 3002
+    });
+  }
+  
+  // 不能踢出自己
+  if (targetUserId === userId) {
+    return res.status(400).json({
+      status: 'error',
+      message: '不能踢出自己',
+      code: 3002
+    });
+  }
+  
+  // 使用removeUser方法移除用户
+  const result = room.removeUser(targetUserId);
+  
+  if (!result) {
+    return res.status(400).json({
+      status: 'error',
+      message: '踢出用户失败',
+      code: 3002
+    });
+  }
+  
+  const { type: leaveType } = result;
+  
+  // 保存房间
+  await room.save();
+  
+  // 通知房间内其他人
+  if (socketHelper) {
+    if (leaveType === 'player') {
+      // 直接通知被踢出的用户
+      socketHelper.safeNotifyUser(targetUserId, 'player.kicked', {
+        roomId,
+        kickedBy: userId
+      });
+      // 通知房间内其他用户
+      socketHelper.safeNotifyRoom(roomId, 'player.kicked', {
+        userId: targetUserId,
+        kickedBy: userId
+      });
+    } else {
+      // 直接通知被踢出的用户
+      socketHelper.safeNotifyUser(targetUserId, 'spectator.kicked', {
+        roomId,
+        kickedBy: userId
+      });
+      // 通知房间内其他用户
+      socketHelper.safeNotifyRoom(roomId, 'spectator.kicked', {
+        userId: targetUserId,
+        kickedBy: userId
+      });
+    }
+  }
+  
+  res.status(200).json({
+    status: 'success',
+    message: '已踢出用户'
   });
 }); 

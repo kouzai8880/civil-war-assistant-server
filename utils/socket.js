@@ -22,13 +22,16 @@ const roomSpectators = new Map();
 // 存储正在进行语音通话的用户
 const voiceUsers = new Map();
 
+// Socket.IO 实例
+let io = null;
+
 /**
  * 初始化Socket.IO服务
  * @param {Object} server - HTTP服务器实例
  * @returns {Object} Socket.IO服务器实例
  */
 function initSocketServer(server) {
-  const io = socketIO(server, {
+  io = socketIO(server, {
     cors: {
       origin: '*',
       methods: ['GET', 'POST']
@@ -325,6 +328,62 @@ function initSocketServer(server) {
       }
     });
     
+    // 语音控制事件处理
+    socket.on('voiceMute', ({ roomId, isMuted }) => {
+      if (!roomId || !rooms.has(roomId)) {
+        socket.emit('error', { message: '无效的房间ID' });
+        return;
+      }
+      
+      const user = activeUsers.get(socket.userId);
+      if (!user) {
+        socket.emit('error', { message: '用户未连接' });
+        return;
+      }
+      
+      // 更新用户的静音状态
+      user.isMuted = isMuted;
+      
+      // 通知房间内相关用户
+      const roomData = rooms.get(roomId);
+      const isSpectator = socket.role === 'spectator';
+      
+      if (isSpectator) {
+        // 如果是观众，只通知其他观众
+        const spectators = Array.from(roomData.values())
+          .filter(u => u.role === 'spectator' && u.userId !== socket.userId)
+          .map(u => activeUsers.get(u.userId))
+          .filter(u => u && u.socket);
+        
+        spectators.forEach(spectator => {
+          spectator.socket.emit('voiceMuteUpdate', {
+            userId: socket.userId,
+            username: socket.username,
+            isMuted
+          });
+        });
+      } else {
+        // 如果是玩家，通知同队伍的玩家和所有观众
+        const relevantUsers = Array.from(roomData.values())
+          .filter(u => (
+            (u.teamId === socket.teamId && u.role === 'player' && u.userId !== socket.userId) || 
+            u.role === 'spectator'
+          ))
+          .map(u => activeUsers.get(u.userId))
+          .filter(u => u && u.socket);
+        
+        relevantUsers.forEach(user => {
+          user.socket.emit('voiceMuteUpdate', {
+            userId: socket.userId,
+            username: socket.username,
+            isMuted
+          });
+        });
+      }
+      
+      console.log(`用户 ${socket.userId} 在房间 ${roomId} 的静音状态更新为: ${isMuted}`);
+    });
+    
     // 断开连接
     socket.on('disconnect', () => {
       const user = activeUsers.get(socket.userId);
@@ -358,6 +417,100 @@ function initSocketServer(server) {
   return io;
 }
 
+// 房间状态更新处理函数
+function emitRoomStatusUpdate(roomId, statusData) {
+  if (!roomId || !rooms.has(roomId)) {
+    return;
+  }
+  
+  // 向房间内所有用户广播状态更新
+  io.to(roomId).emit('roomStatusUpdate', {
+    roomId,
+    ...statusData,
+    updateTime: new Date().toISOString()
+  });
+}
+
+// 玩家状态更新处理函数
+function emitPlayerStatusUpdate(roomId, userId, statusData) {
+  if (!roomId || !rooms.has(roomId)) {
+    return;
+  }
+  
+  // 向房间内所有用户广播玩家状态更新
+  io.to(roomId).emit('playerStatusUpdate', {
+    roomId,
+    userId,
+    ...statusData,
+    updateTime: new Date().toISOString()
+  });
+}
+
+// 队伍状态更新处理函数
+function emitTeamUpdate(roomId, teamId, teamData) {
+  if (!roomId || !rooms.has(roomId)) {
+    return;
+  }
+  
+  // 向房间内所有用户广播队伍状态更新
+  io.to(roomId).emit('teamUpdate', {
+    roomId,
+    teamId,
+    ...teamData,
+    updateTime: new Date().toISOString()
+  });
+}
+
+// 暴露状态更新函数，以便控制器使用
 module.exports = {
-  initSocketServer
+  initSocketServer,
+  getIO: () => io,
+  emitRoomStatusUpdate,
+  emitPlayerStatusUpdate,
+  emitTeamUpdate,
+  // 添加踢出玩家的事件处理
+  notifyPlayerKicked: (roomId, userId, kickedBy) => {
+    if (!roomId || !rooms.has(roomId)) {
+      return;
+    }
+    
+    // 向被踢出的用户发送通知
+    const userSocket = activeUsers.get(userId)?.socket;
+    if (userSocket) {
+      userSocket.emit('player.kicked', {
+        roomId,
+        kickedBy
+      });
+    }
+    
+    // 向房间内其他用户广播
+    io.to(roomId).emit('player.kicked', {
+      userId,
+      kickedBy,
+      updateTime: new Date().toISOString()
+    });
+  },
+  
+  // 添加踢出观众的事件处理
+  notifySpectatorKicked: (roomId, userId, kickedBy) => {
+    if (!roomId || !rooms.has(roomId)) {
+      return;
+    }
+    
+    // 向被踢出的用户发送通知
+    const userSocket = activeUsers.get(userId)?.socket;
+    if (userSocket) {
+      userSocket.emit('spectator.kicked', {
+        roomId,
+        kickedBy
+      });
+    }
+    
+    // 向房间内其他用户广播
+    io.to(roomId).emit('spectator.kicked', {
+      userId,
+      kickedBy,
+      updateTime: new Date().toISOString()
+    });
+  }
 }; 

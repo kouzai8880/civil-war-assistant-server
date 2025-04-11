@@ -52,3 +52,11 @@ API详细文档请参考 `APISpec_游戏内战助手_v1.0.md`
 
 - Node.js-22
 - MongoDB-6.0
+
+## 数据库连接方式
+mongodb://root:r7s7dhr7@civil-war-assistant-db-mongodb.ns-pdcg8wzg.svc:27017
+
+
+## 注意
+直接以当前目录作为项目根目录。注意，次目录已经初始化完成了nodejs项目 直接修改即可
+为这个项目的所有代码写上详细注释

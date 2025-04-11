@@ -77,4 +77,43 @@ exports.safeGetRoomSpectators = (roomId) => {
     console.error(`获取房间${roomId}在线观众失败:`, error);
   }
   return [];
+};
+
+// 安全房间状态更新
+exports.safeEmitRoomStatusUpdate = (roomId, statusData) => {
+  try {
+    if (global.socketIO && typeof global.socketIO.emitRoomStatusUpdate === 'function') {
+      global.socketIO.emitRoomStatusUpdate(roomId, statusData);
+      return true;
+    }
+  } catch (error) {
+    console.error(`更新房间${roomId}状态失败:`, error);
+  }
+  return false;
+};
+
+// 安全玩家状态更新
+exports.safeEmitPlayerStatusUpdate = (roomId, userId, statusData) => {
+  try {
+    if (global.socketIO && typeof global.socketIO.emitPlayerStatusUpdate === 'function') {
+      global.socketIO.emitPlayerStatusUpdate(roomId, userId, statusData);
+      return true;
+    }
+  } catch (error) {
+    console.error(`更新房间${roomId}玩家${userId}状态失败:`, error);
+  }
+  return false;
+};
+
+// 安全队伍状态更新
+exports.safeEmitTeamUpdate = (roomId, teamId, teamData) => {
+  try {
+    if (global.socketIO && typeof global.socketIO.emitTeamUpdate === 'function') {
+      global.socketIO.emitTeamUpdate(roomId, teamId, teamData);
+      return true;
+    }
+  } catch (error) {
+    console.error(`更新房间${roomId}队伍${teamId}状态失败:`, error);
+  }
+  return false;
 }; 

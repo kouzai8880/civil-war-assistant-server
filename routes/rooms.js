@@ -16,7 +16,10 @@ const {
   selectSide,
   getRoomMessages,
   sendMessage,
-  inviteFriends
+  inviteFriends,
+  joinAsPlayer,
+  joinAsSpectator,
+  kickPlayer
 } = require('../controllers/roomController');
 const { protect } = require('../middleware/auth');
 
@@ -35,6 +38,12 @@ router.post('/:roomId/join', protect, joinRoom);
 // 离开房间 (需要认证)
 router.post('/:roomId/leave', protect, leaveRoom);
 
+// 从观众席加入玩家列表 (需要认证)
+router.post('/:roomId/join-as-player', protect, joinAsPlayer);
+
+// 从玩家列表进入观众席 (需要认证)
+router.post('/:roomId/join-as-spectator', protect, joinAsSpectator);
+
 // 开始游戏 (需要认证)
 router.post('/:roomId/start', protect, startGame);
 
@@ -52,5 +61,8 @@ router.post('/:roomId/messages', protect, sendMessage);
 
 // 邀请好友 (需要认证)
 router.post('/:roomId/invite', protect, inviteFriends);
+
+// 踢出玩家 (需要认证)
+router.post('/:roomId/kick', protect, kickPlayer);
 
 module.exports = router; 

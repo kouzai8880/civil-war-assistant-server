@@ -6,8 +6,8 @@
 
 ### 1.1 基础信息
 
-- **基础URL**: `https://api.lolbattle.com/v1`
-- **WebSocket URL**: `wss://api.lolbattle.com`
+- **基础URL**: `https://dvmxujshaduv.sealoshzh.site/api/v1`
+- **WebSocket URL**: `https://dvmxujshaduv.sealoshzh.site`
 - **格式**: JSON
 - **认证方式**: JWT (JSON Web Token)
 - **API版本**: v1
@@ -23,7 +23,7 @@ Authorization: Bearer {token}
 WebSocket 连接需要在连接时通过 auth 参数传递 JWT 令牌：
 
 ```javascript
-const socket = io('wss://api.lolbattle.com', {
+const socket = io('https://dvmxujshaduv.sealoshzh.site', {
   auth: {
     token: 'your_jwt_token'
   }
@@ -123,6 +123,48 @@ WebSocket 连接支持以下参数：
   });
   ```
 
+<!-- 需要优化: 增加语音控制事件 -->
+#### 1.4.4 语音控制事件（待添加）
+
+- **voiceMute**: 静音控制
+  ```javascript
+  socket.emit('voiceMute', {
+    roomId: 'string',
+    isMuted: true
+  });
+  ```
+
+- **voiceMuteUpdate**: 静音状态更新
+  ```javascript
+  socket.on('voiceMuteUpdate', (data) => {
+    // data: { userId: string, username: string, isMuted: boolean }
+  });
+  ```
+
+<!-- 需要优化: 增加房间状态更新事件 -->
+#### 1.4.5 房间状态更新事件（待添加）
+
+- **roomStatusUpdate**: 房间状态变更
+  ```javascript
+  socket.on('roomStatusUpdate', (data) => {
+    // data: { roomId: string, status: string, updateTime: string }
+  });
+  ```
+
+- **playerStatusUpdate**: 玩家状态更新
+  ```javascript
+  socket.on('playerStatusUpdate', (data) => {
+    // data: { roomId: string, userId: string, status: string, teamId: number }
+  });
+  ```
+
+- **teamUpdate**: 队伍状态更新
+  ```javascript
+  socket.on('teamUpdate', (data) => {
+    // data: { roomId: string, teamId: number, captainId: string, players: [], side: string }
+  });
+  ```
+
 ### 1.5 返回格式
 
 所有API返回的格式都遵循以下标准结构：
@@ -207,7 +249,16 @@ POST /auth/login
 
 ```json
 {
-  "email": "user@example.com",
+  "username": "testuser_updated",  // 用户名和邮箱至少提供其中一个
+  "password": "password123"
+}
+```
+
+或
+
+```json
+{
+  "email": "test@example.com",  // 用户名和邮箱至少提供其中一个
   "password": "password123"
 }
 ```
@@ -218,27 +269,42 @@ POST /auth/login
 {
   "status": "success",
   "data": {
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
     "user": {
-      "id": "u123456",
-      "username": "玩家昵称",
-      "email": "user@example.com",
+      "id": "67e93fa4b71ccae1597dca13",
+      "username": "testuser_updated",
+      "email": "test@example.com",
+      "gameId": "LoL游戏账号ID001",
       "level": 1,
       "points": 0,
-      "avatar": "https://example.com/avatar.jpg",
-      "lastLoginTime": "2023-03-29T08:00:00.000Z"
-    },
-    "token": "jwt.token.here"
-  },
-  "message": "登录成功"
+      "avatar": "https://via.placeholder.com/150",
+      "settings": {
+        "allowInvite": true,
+        "allowFriendRequest": true
+      },
+      "createTime": "2023-03-29T08:00:00.000Z",
+      "lastLoginTime": "2023-03-29T10:15:30.000Z",
+      "stats": {
+        "totalGames": 0,
+        "wins": 0,
+        "losses": 0,
+        "likes": 0,
+        "dislikes": 0,
+        "winRate": 0
+      }
+    }
+  }
 }
 ```
 
 ### 2.3 获取用户资料
 
+获取特定用户的详细资料。
+
 **请求**:
 
 ```
-GET /users/{userId}
+GET /users/{userId}/profile
 ```
 
 **响应**:
@@ -248,29 +314,69 @@ GET /users/{userId}
   "status": "success",
   "data": {
     "user": {
-      "id": "u123456",
-      "username": "玩家昵称",
-      "email": "user@example.com",
-      "gameId": "游戏ID",
-      "level": 5,
-      "points": 450,
-      "avatar": "https://example.com/avatar.jpg",
-      "createTime": "2023-03-29T08:00:00.000Z",
-      "lastLoginTime": "2023-03-29T10:00:00.000Z",
+      "id": "67e93fa4b71ccae1597dca13",
+      "username": "testuser",
+      "email": "test@example.com",
+      "gameId": "游戏ID123",
+      "level": 1,
+      "points": 0,
+      "avatar": "https://via.placeholder.com/150",
+      "createTime": "2025-03-30T12:57:08.872Z",
+      "lastLoginTime": "2025-03-30T12:57:08.871Z",
       "stats": {
-        "totalGames": 42,
-        "wins": 26,
-        "losses": 16,
-        "winRate": 61.9,
-        "likes": 87,
-        "dislikes": 4
+        "totalGames": 0,
+        "wins": 0,
+        "losses": 0
       }
     }
   }
 }
 ```
 
-### 2.4 更新用户资料
+### 2.4 获取当前用户信息
+
+获取当前登录用户的详细信息。
+
+**请求**:
+
+```
+GET /auth/me
+```
+
+**响应**:
+
+```json
+{
+  "status": "success",
+  "data": {
+    "user": {
+      "id": "67e93fa4b71ccae1597dca13",
+      "username": "testuser",
+      "email": "test@example.com",
+      "gameId": "游戏ID123",
+      "level": 1,
+      "points": 0,
+      "avatar": "https://via.placeholder.com/150",
+      "settings": {
+        "allowInvite": true,
+        "allowFriendRequest": true
+      },
+      "createTime": "2023-03-29T08:00:00.000Z",
+      "lastLoginTime": "2023-03-29T10:15:30.000Z",
+      "stats": {
+        "totalGames": 0,
+        "wins": 0,
+        "losses": 0,
+        "likes": 0,
+        "dislikes": 0,
+        "winRate": 0
+      }
+    }
+  }
+}
+```
+
+### 2.5 更新用户资料
 
 **请求**:
 
@@ -282,13 +388,8 @@ PUT /users/{userId}
 
 ```json
 {
-  "username": "新昵称",
-  "gameId": "新游戏ID",
-  "avatar": "base64编码的图片数据",
-  "settings": {
-    "allowInvite": true,
-    "allowFriendRequest": true
-  }
+  "username": "testuser_updated", 
+  "avatar": "https://via.placeholder.com/200"
 }
 ```
 
@@ -299,17 +400,16 @@ PUT /users/{userId}
   "status": "success",
   "data": {
     "user": {
-      "id": "u123456",
-      "username": "新昵称",
-      "gameId": "新游戏ID",
-      "avatar": "https://example.com/new-avatar.jpg",
+      "id": "67e93fa4b71ccae1597dca13",
+      "username": "testuser_updated",
+      "gameId": "LoL游戏账号ID001",
+      "avatar": "https://via.placeholder.com/200",
       "settings": {
         "allowInvite": true,
         "allowFriendRequest": true
       }
     }
-  },
-  "message": "用户资料已更新"
+  }
 }
 ```
 
@@ -340,9 +440,117 @@ PUT /users/{userId}/password
 }
 ```
 
+### 2.7 获取用户战绩统计
+
+获取特定用户的战绩统计数据。
+
+**请求**:
+
+```
+GET /users/{userId}/stats
+```
+
+**响应**:
+
+```json
+{
+  "status": "success",
+  "data": {
+    "stats": {
+      "totalGames": 0,
+      "wins": 0,
+      "losses": 0,
+      "winRate": 0,
+      "likes": 0,
+      "dislikes": 0,
+      "avgKDA": "0/0/0",
+      "kdaRatio": 0,
+      "avgDamage": 0,
+      "avgGold": 0,
+      "avgScore": 0,
+      "mostPlayedChampions": [],
+      "recentForm": []
+    }
+  }
+}
+```
+
+### 2.8 获取用户对局列表
+
+获取特定用户参与的所有对局。
+
+**请求**:
+
+```
+GET /users/{userId}/matches
+```
+
+**参数**:
+
+```
+page?: number (默认1)
+limit?: number (默认20)
+```
+
+**响应**:
+
+```json
+{
+  "status": "success",
+  "data": {
+    "matches": []
+  },
+  "meta": {
+    "page": 1,
+    "limit": 20,
+    "total": 0
+  }
+}
+```
+
+### 2.9 添加好友
+
+向指定用户发送好友请求。
+
+**请求**:
+
+```
+POST /users/friends
+```
+
+**参数**:
+
+```json
+{
+  "userId": "67e940387df2d4360a53fb78"
+}
+```
+
+**响应**:
+
+```json
+{
+  "status": "success",
+  "data": {
+    "friend": {
+      "id": "67f0da3148f6d48101a844be",
+      "userId": "67e940387df2d4360a53fb78",
+      "username": "testuser456",
+      "avatar": "https://via.placeholder.com/150",
+      "status": "pending",
+      "groupName": "默认分组",
+      "createTime": "2025-04-05T07:22:25.810Z"
+    }
+  },
+  "message": "好友请求已发送"
+}
+```
+
 ## 3. 房间管理 API
 
-### 3.1 创建房间
+### 3.1 创建游戏房间
+
+创建一个新的游戏房间。
 
 **请求**:
 
@@ -354,13 +562,11 @@ POST /rooms
 
 ```json
 {
-  "name": "周末内战5V5",
-  "gameType": "LOL",
-  "playerCount": 10,
-  "teamCount": 2,
-  "pickMode": "12211",
-  "password": "123456", // 可选
-  "description": "周末欢乐局，欢迎加入！" // 可选
+  "name": "测试新房间", 
+  "gameType": "LOL", 
+  "playerCount": 10, 
+  "pickMode": "random", 
+  "description": "API测试创建的房间"
 }
 ```
 
@@ -371,46 +577,48 @@ POST /rooms
   "status": "success",
   "data": {
     "room": {
-      "id": "r789012",
-      "name": "周末内战5V5",
-      "creatorId": "u123456",
+      "id": "67f0d97448f6d48101a844ae",
+      "name": "测试新房间",
+      "creatorId": "67e93fa4b71ccae1597dca13",
       "gameType": "LOL",
       "playerCount": 10,
       "teamCount": 2,
-      "pickMode": "12211",
+      "pickMode": "random",
+      "hasPassword": false,
+      "isPublic": true,
+      "description": "API测试创建的房间",
       "status": "waiting",
-      "hasPassword": true,
-      "description": "周末欢乐局，欢迎加入！",
-      "createTime": "2023-03-29T14:30:00.000Z",
       "players": [
         {
-          "userId": "u123456",
-          "username": "新昵称",
-          "avatar": "https://example.com/avatar.jpg",
+          "userId": "67e93fa4b71ccae1597dca13",
+          "isCreator": true,
           "status": "online",
-          "isCreator": true
+          "joinTime": "2025-04-05T07:19:16.019Z"
         }
-      ]
+      ],
+      "createTime": "2025-04-05T07:19:16.019Z"
     }
-  },
-  "message": "房间创建成功"
+  }
 }
 ```
 
 ### 3.2 获取房间列表
 
+获取所有可用的游戏房间。
+
 **请求**:
 
 ```
-GET /rooms?status=waiting&page=1&limit=20
+GET /rooms
 ```
 
-**查询参数**:
-- `status`: 房间状态筛选 (waiting/picking/gaming/ended)，可选
-- `gameType`: 游戏类型筛选，可选
-- `page`: 页码，默认1
-- `limit`: 每页数量，默认20
-- `search`: 搜索关键词，可选
+**参数**:
+
+```
+page?: number (默认1)
+limit?: number (默认20)
+status?: string (waiting, picking, gaming, finished)
+```
 
 **响应**:
 
@@ -420,30 +628,35 @@ GET /rooms?status=waiting&page=1&limit=20
   "data": {
     "rooms": [
       {
-        "id": "r789012",
-        "name": "周末内战5V5",
-        "creatorId": "u123456",
-        "creatorName": "新昵称",
-        "creatorAvatar": "https://example.com/avatar.jpg",
+        "id": "67e95c6119732f3f913ce8d7",
+        "name": "游戏验证完整测试",
+        "creatorId": "67e940387df2d4360a53fb78",
+        "creatorName": "testuser456",
+        "creatorAvatar": "https://via.placeholder.com/150",
         "gameType": "LOL",
         "playerCount": 10,
-        "currentPlayers": 1,
+        "currentPlayers": 9,
+        "viewerCount": 0,
         "status": "waiting",
-        "hasPassword": true,
-        "createTime": "2023-03-29T14:30:00.000Z"
-      },
-      // 更多房间...
+        "hasPassword": false,
+        "isPublic": true,
+        "pickMode": "12211",
+        "description": "测试游戏验证功能",
+        "createTime": "2025-03-30T14:59:45.289Z"
+      }
     ]
   },
   "meta": {
     "page": 1,
     "limit": 20,
-    "total": 35
+    "total": 10
   }
 }
 ```
 
 ### 3.3 获取房间详情
+
+获取特定房间的详细信息。
 
 **请求**:
 
@@ -458,50 +671,54 @@ GET /rooms/{roomId}
   "status": "success",
   "data": {
     "room": {
-      "id": "r789012",
-      "name": "周末内战5V5",
-      "creatorId": "u123456",
-      "creatorName": "新昵称",
+      "id": "67e95c6119732f3f913ce8d7",
+      "name": "游戏验证完整测试",
+      "creatorId": "67e940387df2d4360a53fb78",
+      "creatorName": "testuser456",
+      "creatorAvatar": "https://via.placeholder.com/150",
       "gameType": "LOL",
       "playerCount": 10,
       "teamCount": 2,
       "pickMode": "12211",
+      "hasPassword": false,
+      "description": "测试游戏验证功能",
       "status": "waiting",
-      "description": "周末欢乐局，欢迎加入！",
-      "createTime": "2023-03-29T14:30:00.000Z",
       "players": [
         {
-          "userId": "u123456",
-          "username": "新昵称",
-          "avatar": "https://example.com/avatar.jpg",
-          "status": "online",
-          "isCreator": true,
+          "userId": "67e940387df2d4360a53fb78",
+          "username": "testuser456",
+          "avatar": "https://via.placeholder.com/150",
+          "gameId": "新游戏ID",
+          "totalGames": 1,
+          "wins": 1,
           "teamId": null,
-          "isCaptain": false
-        },
-        // 更多玩家...
-      ],
-      "teams": [
-        {
-          "id": 1,
-          "name": "蓝队",
-          "side": "blue",
-          "captainId": null
-        },
-        {
-          "id": 2,
-          "name": "红队",
-          "side": "red",
-          "captainId": null
+          "isCaptain": false,
+          "isCreator": true,
+          "status": "offline",
+          "joinTime": "2025-03-30T14:59:45.289Z"
         }
       ],
-      "matches": []
+      "spectators": [
+        {
+          "userId": "67e93fa4b71ccae1597dca13",
+          "username": "testuser",
+          "avatar": "https://via.placeholder.com/150",
+          "isCreator": false,
+          "status": "online",
+          "joinTime": "2025-03-30T15:00:05.123Z"
+        }
+      ],
+      "teams": [],
+      "nextTeamPick": null,
+      "createTime": "2025-03-30T14:59:45.289Z"
     }
   }
 }
 ```
 
 ### 3.4 加入房间
+
+加入指定的游戏房间，用户默认加入观众席。
 
 **请求**:
 
@@ -523,21 +740,192 @@ POST /rooms/{roomId}/join
 {
   "status": "success",
   "data": {
-    "player": {
-      "userId": "u654321",
-      "username": "另一玩家",
-      "avatar": "https://example.com/avatar2.jpg",
-      "status": "online",
-      "isCreator": false,
-      "teamId": null,
-      "isCaptain": false
+    "room": {
+      "id": "67e95c6119732f3f913ce8d7",
+      "name": "游戏验证完整测试",
+      "creatorId": "67e940387df2d4360a53fb78",
+      "creatorName": "testuser456",
+      "creatorAvatar": "https://via.placeholder.com/150",
+      "gameType": "LOL",
+      "playerCount": 10,
+      "teamCount": 2,
+      "pickMode": "12211",
+      "hasPassword": false,
+      "description": "测试游戏验证功能",
+      "status": "waiting",
+      "players": [
+        {
+          "userId": "67e940387df2d4360a53fb78",
+          "username": "testuser456",
+          "avatar": "https://via.placeholder.com/150",
+          "gameId": "新游戏ID",
+          "totalGames": 1,
+          "wins": 1,
+          "teamId": null,
+          "isCaptain": false,
+          "isCreator": true,
+          "status": "offline",
+          "joinTime": "2025-03-30T14:59:45.289Z"
+        }
+      ],
+      "spectators": [
+        {
+          "userId": "67e93fa4b71ccae1597dca13",
+          "username": "testuser",
+          "avatar": "https://via.placeholder.com/150",
+          "gameId": "游戏ID123",
+          "totalGames": 0,
+          "wins": 0,
+          "isCreator": false,
+          "status": "online",
+          "joinTime": "2025-03-30T15:00:05.123Z"
+        }
+      ],
+      "teams": [],
+      "nextTeamPick": null,
+      "createTime": "2025-03-30T14:59:45.289Z"
     }
   },
-  "message": "成功加入房间"
+  "message": "加入房间成功，已进入观众席"
 }
 ```
 
-### 3.5 离开房间
+### 3.5 从观众席加入玩家列表
+
+将用户从观众席移动到玩家列表。
+
+**请求**:
+
+```
+POST /rooms/{roomId}/join-as-player
+```
+
+**响应**:
+
+```json
+{
+  "status": "success",
+  "data": {
+    "room": {
+      "id": "67e95c6119732f3f913ce8d7",
+      "name": "游戏验证完整测试",
+      "creatorId": "67e940387df2d4360a53fb78",
+      "creatorName": "testuser456",
+      "creatorAvatar": "https://via.placeholder.com/150",
+      "gameType": "LOL",
+      "playerCount": 10,
+      "teamCount": 2,
+      "pickMode": "12211",
+      "hasPassword": false,
+      "description": "测试游戏验证功能",
+      "status": "waiting",
+      "players": [
+        {
+          "userId": "67e940387df2d4360a53fb78",
+          "username": "testuser456",
+          "avatar": "https://via.placeholder.com/150",
+          "gameId": "新游戏ID",
+          "totalGames": 1,
+          "wins": 1,
+          "teamId": null,
+          "isCaptain": false,
+          "isCreator": true,
+          "status": "offline",
+          "joinTime": "2025-03-30T14:59:45.289Z"
+        },
+        {
+          "userId": "67e93fa4b71ccae1597dca13",
+          "username": "testuser",
+          "avatar": "https://via.placeholder.com/150",
+          "gameId": "游戏ID123",
+          "totalGames": 0,
+          "wins": 0,
+          "teamId": null,
+          "isCaptain": false,
+          "isCreator": false,
+          "status": "online",
+          "joinTime": "2025-03-30T15:00:05.123Z"
+        }
+      ],
+      "spectators": [],
+      "teams": [],
+      "nextTeamPick": null,
+      "createTime": "2025-03-30T14:59:45.289Z"
+    }
+  },
+  "message": "已从观众席加入玩家列表"
+}
+```
+
+### 3.6 从玩家列表进入观众席
+
+将用户从玩家列表移动到观众席。
+
+**请求**:
+
+```
+POST /rooms/{roomId}/join-as-spectator
+```
+
+**响应**:
+
+```json
+{
+  "status": "success",
+  "data": {
+    "room": {
+      "id": "67e95c6119732f3f913ce8d7",
+      "name": "游戏验证完整测试",
+      "creatorId": "67e940387df2d4360a53fb78",
+      "creatorName": "testuser456",
+      "creatorAvatar": "https://via.placeholder.com/150",
+      "gameType": "LOL",
+      "playerCount": 10,
+      "teamCount": 2,
+      "pickMode": "12211",
+      "hasPassword": false,
+      "description": "测试游戏验证功能",
+      "status": "waiting",
+      "players": [
+        {
+          "userId": "67e940387df2d4360a53fb78",
+          "username": "testuser456",
+          "avatar": "https://via.placeholder.com/150",
+          "gameId": "新游戏ID",
+          "totalGames": 1,
+          "wins": 1,
+          "teamId": null,
+          "isCaptain": false,
+          "isCreator": true,
+          "status": "offline",
+          "joinTime": "2025-03-30T14:59:45.289Z"
+        }
+      ],
+      "spectators": [
+        {
+          "userId": "67e93fa4b71ccae1597dca13",
+          "username": "testuser",
+          "avatar": "https://via.placeholder.com/150",
+          "gameId": "游戏ID123",
+          "totalGames": 0,
+          "wins": 0,
+          "isCreator": false,
+          "status": "online",
+          "joinTime": "2025-03-30T15:00:05.123Z"
+        }
+      ],
+      "teams": [],
+      "nextTeamPick": null,
+      "createTime": "2025-03-30T14:59:45.289Z"
+    }
+  },
+  "message": "已从玩家列表进入观众席"
+}
+```
+
+### 3.7 离开房间
+
+离开当前房间，无论用户是在玩家列表还是观众席。
 
 **请求**:
 
@@ -554,7 +942,75 @@ POST /rooms/{roomId}/leave
 }
 ```
 
-### 3.6 开始游戏
+### 3.8 踢出玩家
+
+房主可以将其他玩家或观众踢出房间。
+
+**请求**:
+
+```
+POST /rooms/{roomId}/kick
+```
+
+**参数**:
+
+```json
+{
+  "targetUserId": "67e93fa4b71ccae1597dca13"  // 要踢出的用户ID
+}
+```
+
+**响应**:
+
+```json
+{
+  "status": "success",
+  "message": "已踢出用户"
+}
+```
+
+**WebSocket事件**:
+
+当用户被踢出房间时，会触发以下WebSocket事件：
+
+1. 被踢出的用户会收到以下事件之一：
+   - `player.kicked`：当玩家被踢出时
+   - `spectator.kicked`：当观众被踢出时
+
+   事件数据格式：
+   ```json
+   {
+     "roomId": "67e95c6119732f3f913ce8d7",  // 房间ID
+     "kickedBy": "67e940387df2d4360a53fb78"  // 踢出该用户的房主ID
+   }
+   ```
+
+2. 房间内其他用户会收到以下事件之一：
+   - `player.kicked`：当玩家被踢出时
+   - `spectator.kicked`：当观众被踢出时
+
+   事件数据格式：
+   ```json
+   {
+     "userId": "67e93fa4b71ccae1597dca13",  // 被踢出的用户ID
+     "kickedBy": "67e940387df2d4360a53fb78",  // 踢出该用户的房主ID
+     "updateTime": "2025-03-30T15:30:45.123Z"  // 更新时间
+   }
+   ```
+
+**客户端处理**:
+
+1. 当收到 `player.kicked` 或 `spectator.kicked` 事件时：
+   - 如果当前用户是被踢出的用户（通过比较 `userId` 或 `roomId`）：
+     - 显示被踢出提示
+     - 退出房间界面
+     - 更新用户状态
+   - 如果当前用户是房间内的其他用户：
+     - 从玩家列表或观众列表中移除被踢出的用户
+     - 更新房间状态
+     - 可选：显示用户被踢出的提示
+
+### 3.9 开始游戏
 
 只有创建者可以操作，会执行随机分队、选择队长等操作。
 
@@ -607,14 +1063,14 @@ POST /rooms/{roomId}/start
 }
 ```
 
-### 3.7 获取我的房间列表
+### 3.10 获取我的房间列表
 
 获取当前用户参与的房间列表。
 
 **请求**:
 
 ```
-GET /users/me/rooms?status=all&page=1&limit=20
+GET /users/rooms
 ```
 
 **查询参数**:
@@ -622,7 +1078,37 @@ GET /users/me/rooms?status=all&page=1&limit=20
 - `page`: 页码，默认1
 - `limit`: 每页数量，默认20
 
-**响应**: 与获取房间列表接口类似
+**响应**:
+
+```json
+{
+  "status": "success",
+  "data": {
+    "rooms": [
+      {
+        "id": "67f0d97448f6d48101a844ae",
+        "name": "测试新房间",
+        "creatorId": "67e93fa4b71ccae1597dca13",
+        "creatorName": "testuser",
+        "creatorAvatar": "https://via.placeholder.com/150",
+        "gameType": "LOL",
+        "playerCount": 10,
+        "currentPlayers": 1,
+        "viewerCount": 0,
+        "status": "waiting",
+        "hasPassword": false,
+        "pickMode": "random",
+        "createTime": "2025-04-05T07:19:16.019Z"
+      }
+    ]
+  },
+  "meta": {
+    "page": 1,
+    "limit": 20,
+    "total": 1
+  }
+}
+```
 
 ## 4. 队伍管理 API
 
@@ -712,14 +1198,14 @@ POST /rooms/{roomId}/teams/select-side
 **请求**:
 
 ```
-POST /users/me/game-binding
+POST /users/bind-game
 ```
 
 **参数**:
 
 ```json
 {
-  "gameId": "游戏ID",
+  "gameId": "LoL游戏账号ID001",
   "platform": "LOL" // 默认为LOL
 }
 ```
@@ -731,11 +1217,11 @@ POST /users/me/game-binding
   "status": "success",
   "data": {
     "binding": {
-      "userId": "u123456",
-      "gameId": "游戏ID",
       "platform": "LOL",
-      "status": "pending", // pending/verified
-      "createTime": "2023-03-29T15:00:00.000Z"
+      "gameId": "LoL游戏账号ID001",
+      "status": "pending",
+      "_id": "67f0e0d348f6d48101a84503",
+      "createTime": "2025-04-05T07:50:43.305Z"
     }
   },
   "message": "游戏账号绑定待验证"
@@ -869,6 +1355,16 @@ POST /games/verify
 GET /users/{userId}/stats
 ```
 
+<!-- 需要优化: 战绩统计查询参数扩展 -->
+**建议查询参数扩展**:
+```
+GET /users/{userId}/stats?timeRange=30d&gameType=LOL
+```
+
+**建议查询参数**:
+- `timeRange`: 时间范围 (7d/30d/90d/all)，可选，默认all
+- `gameType`: 游戏类型筛选 (LOL/PUBG/CSGO/all)，可选，默认all
+
 **响应**:
 
 ```json
@@ -903,6 +1399,38 @@ GET /users/{userId}/stats
 }
 ```
 
+<!-- 需要优化: 战绩统计返回数据扩展 -->
+**建议响应数据扩展**:
+```json
+{
+  "status": "success",
+  "data": {
+    "stats": {
+      "totalGames": 42,
+      "wins": 26,
+      "losses": 16,
+      "winRate": 61.9,
+      "likes": 87,
+      "dislikes": 4,
+      "avgKDA": "4.2/3.1/8.7",
+      "kdaRatio": 4.16,
+      "avgDamage": 18500,
+      "avgGold": 12500,
+      "mostPlayedChampions": [...],
+      "recentForm": ["W", "W", "L", "W", "L"],  // 新增：最近5场战绩走势
+      "roleDistribution": {  // 新增：位置分布
+        "top": 10,
+        "jungle": 15,
+        "mid": 8,
+        "adc": 5,
+        "support": 4
+      },
+      "avgScore": 8.5  // 新增：平均评分
+    }
+  }
+}
+```
+
 ### 6.2 获取用户对局列表
 
 **请求**:
@@ -916,6 +1444,15 @@ GET /users/{userId}/matches?page=1&limit=20
 - `limit`: 每页数量，默认20
 - `champion`: 英雄ID筛选，可选
 - `result`: 胜负筛选 (win/lose)，可选
+
+<!-- 需要优化: 用户对局列表查询参数扩展 -->
+**建议查询参数扩展**:
+- `page`: 页码，默认1
+- `limit`: 每页数量，默认20
+- `gameType`: 游戏类型 (LOL/PUBG/CSGO)，可选
+- `timeRange`: 时间范围 (7d/30d/90d)，可选，表示最近7天、30天、90天
+- `result`: 胜负筛选 (win/lose)，可选
+- `champion`: 英雄ID筛选，可选
 
 **响应**:
 
@@ -943,6 +1480,59 @@ GET /users/{userId}/matches?page=1&limit=20
         "cs": 180,
         "rating": 9.2,
         "isMVP": true
+      },
+      // 更多对局...
+    ]
+  },
+  "meta": {
+    "page": 1,
+    "limit": 20,
+    "total": 42
+  }
+}
+```
+
+<!-- 需要优化: 用户对局列表返回数据扩展 -->
+**建议响应数据扩展**:
+```json
+{
+  "status": "success",
+  "data": {
+    "matches": [
+      {
+        "id": "m567890",
+        "roomId": "r789012",
+        "roomName": "周末内战5V5",
+        "gameId": "LOL游戏ID",
+        "startTime": "2023-03-29T16:00:00.000Z",
+        "duration": "30分钟",
+        "result": "win",
+        "championId": 1,
+        "championName": "安妮",
+        "kills": 5,
+        "deaths": 2,
+        "assists": 10,
+        "kda": "5/2/10",
+        "kdaRatio": 7.5,
+        "damage": 20500,
+        "gold": 12000,
+        "cs": 180,
+        "items": [3006, 3031, 3036, 3094, 3072, 3340],  // 新增：装备ID列表
+        "rating": 9.2,  // 新增：评分
+        "isMVP": true,  // 新增：是否MVP
+        "team": {  // 新增：队伍信息
+          "side": "blue",
+          "result": "win"
+        },
+        "allPlayers": [  // 新增：所有玩家简要信息
+          {
+            "userId": "u123456",
+            "username": "玩家1",
+            "championId": 1,
+            "side": "blue"
+          },
+          // 更多玩家...
+        ]
       },
       // 更多对局...
     ]
@@ -1097,14 +1687,14 @@ GET /users/me/friends
 **请求**:
 
 ```
-POST /users/me/friends
+POST /users/friends
 ```
 
 **参数**:
 
 ```json
 {
-  "userId": "u654321" // 或者使用 "username": "玩家昵称"
+  "userId": "67e940387df2d4360a53fb78"
 }
 ```
 
@@ -1115,16 +1705,16 @@ POST /users/me/friends
   "status": "success",
   "data": {
     "friend": {
-      "id": "f123456",
-      "userId": "u654321",
-      "username": "另一玩家",
-      "avatar": "https://example.com/avatar2.jpg",
-      "status": "online",
+      "id": "67f0da3148f6d48101a844be",
+      "userId": "67e940387df2d4360a53fb78",
+      "username": "testuser456",
+      "avatar": "https://via.placeholder.com/150",
+      "status": "pending",
       "groupName": "默认分组",
-      "createTime": "2023-03-29T17:00:00.000Z"
+      "createTime": "2025-04-05T07:22:25.810Z"
     }
   },
-  "message": "好友添加成功"
+  "message": "好友请求已发送"
 }
 ```
 
@@ -1302,7 +1892,7 @@ POST /rooms/{roomId}/messages
 ### 9.1 WebSocket连接
 
 ```
-WebSocket: wss://api.lolbattle.com/ws?token={jwt_token}
+WebSocket: https://dvmxujshaduv.sealoshzh.site/ws?token={jwt_token}
 ```
 
 ### 9.2 消息类型
@@ -1316,12 +1906,99 @@ WebSocket: wss://api.lolbattle.com/ws?token={jwt_token}
     "status": "picking",
     "players": [
       // 玩家列表更新
+    ],
+    "spectators": [
+      // 观众列表更新
     ]
   }
 }
 ```
 
-2. **聊天消息**:
+2. **玩家加入**:
+```json
+{
+  "type": "player.joined",
+  "data": {
+    "roomId": "r789012",
+    "userId": "u123456",
+    "username": "玩家昵称",
+    "avatar": "https://example.com/avatar.jpg",
+    "totalGames": 42,
+    "wins": 26,
+    "isCreator": false
+  }
+}
+```
+
+3. **玩家离开**:
+```json
+{
+  "type": "player.left",
+  "data": {
+    "roomId": "r789012",
+    "userId": "u123456",
+    "username": "玩家昵称",
+    "newCreatorId": null // 如果转移了创建者权限，则返回新创建者ID
+  }
+}
+```
+
+4. **观众加入**:
+```json
+{
+  "type": "spectator.joined",
+  "data": {
+    "roomId": "r789012",
+    "userId": "u123456",
+    "username": "玩家昵称",
+    "avatar": "https://example.com/avatar.jpg",
+    "totalGames": 42,
+    "wins": 26,
+    "isCreator": false
+  }
+}
+```
+
+5. **观众离开**:
+```json
+{
+  "type": "spectator.left",
+  "data": {
+    "roomId": "r789012",
+    "userId": "u123456",
+    "username": "玩家昵称",
+    "newCreatorId": null // 如果转移了创建者权限，则返回新创建者ID
+  }
+}
+```
+
+6. **玩家被踢出**:
+```json
+{
+  "type": "player.kicked",
+  "data": {
+    "roomId": "r789012",
+    "userId": "u123456",
+    "username": "玩家昵称",
+    "kickedBy": "u654321" // 踢出该玩家的用户ID
+  }
+}
+```
+
+7. **观众被踢出**:
+```json
+{
+  "type": "spectator.kicked",
+  "data": {
+    "roomId": "r789012",
+    "userId": "u123456",
+    "username": "玩家昵称",
+    "kickedBy": "u654321" // 踢出该观众的用户ID
+  }
+}
+```
+
+8. **聊天消息**:
 ```json
 {
   "type": "chat.message",
@@ -1333,7 +2010,7 @@ WebSocket: wss://api.lolbattle.com/ws?token={jwt_token}
 }
 ```
 
-3. **队伍变更**:
+9. **队伍变更**:
 ```json
 {
   "type": "team.update",
@@ -1346,7 +2023,7 @@ WebSocket: wss://api.lolbattle.com/ws?token={jwt_token}
 }
 ```
 
-4. **邀请通知**:
+10. **邀请通知**:
 ```json
 {
   "type": "invite.received",
@@ -1363,7 +2040,7 @@ WebSocket: wss://api.lolbattle.com/ws?token={jwt_token}
 }
 ```
 
-5. **游戏开始通知**:
+11. **游戏开始通知**:
 ```json
 {
   "type": "game.start",
@@ -1511,17 +2188,15 @@ WebSocket: wss://api.lolbattle.com/ws?token={jwt_token}
   "data": {
     "messages": [
       {
-        "id": "msg001",
-        "userId": "60d21b4667d0d8992e610c85",
-        "username": "testuser",
-        "avatar": "https://example.com/avatar.jpg",
-        "content": "大家好！",
-        "type": "text", // text, emoji
-        "timestamp": "2023-06-22T10:00:00Z"
+        "id": "1743839287326-70adbe4b-0251-462f-8df6-91086e30f7f0",
+        "userId": "67e93fa4b71ccae1597dca13",
+        "content": "大家好！这是一条测试消息",
+        "type": "text",
+        "timestamp": 1743839287326
       }
     ],
-    "hasMore": true,
-    "nextBefore": "2023-06-22T09:00:00Z"
+    "hasMore": false,
+    "nextBefore": null
   }
 }
 ```
@@ -1533,7 +2208,7 @@ WebSocket: wss://api.lolbattle.com/ws?token={jwt_token}
 - 请求体:
 ```json
 {
-  "content": "大家好！",
+  "content": "大家好！这是一条测试消息",
   "type": "text" // text, emoji
 }
 ```
@@ -1544,13 +2219,11 @@ WebSocket: wss://api.lolbattle.com/ws?token={jwt_token}
   "message": "消息发送成功",
   "data": {
     "message": {
-      "id": "msg001",
-      "userId": "60d21b4667d0d8992e610c85",
-      "username": "testuser",
-      "avatar": "https://example.com/avatar.jpg",
-      "content": "大家好！",
+      "id": "1743839287326-70adbe4b-0251-462f-8df6-91086e30f7f0",
+      "userId": "67e93fa4b71ccae1597dca13",
+      "content": "大家好！这是一条测试消息",
       "type": "text",
-      "timestamp": "2023-06-22T10:00:00Z"
+      "timestamp": 1743839287326
     }
   }
 }

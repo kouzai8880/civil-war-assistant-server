@@ -145,8 +145,9 @@ UserSchema.methods.passwordChangedAfter = function(timestamp) {
 
 // 生成JWT令牌
 UserSchema.methods.getSignedJwtToken = function () {
-  return jwt.sign({ id: this._id }, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRES_IN
+  const config = require('../config');
+  return jwt.sign({ id: this._id }, config.server.jwtSecret, {
+    expiresIn: config.server.jwtExpiresIn
   });
 };
 
