@@ -8,13 +8,12 @@ const User = require('../models/User');
 const Message = require('../models/Message');
 const Invitation = require('../models/Invitation');
 const asyncHandler = require('../utils/asyncHandler');
-const socketHelper = require('../utils/socketHelper');
 
 // 创建房间
 exports.createRoom = asyncHandler(async (req, res) => {
   const userId = req.user.id;
   const { name, playerCount, gameType, teamCount, pickMode, password, description, isPublic } = req.body;
-  
+
   // 检查必要字段
   if (!name || !playerCount) {
     return res.status(400).json({
@@ -23,7 +22,7 @@ exports.createRoom = asyncHandler(async (req, res) => {
       code: 1001
     });
   }
-  
+
   // 创建房间
   const room = new Room({
     name,
@@ -35,18 +34,18 @@ exports.createRoom = asyncHandler(async (req, res) => {
     description,
     isPublic: isPublic !== undefined ? isPublic : true
   });
-  
+
   // 设置密码（如果有）
   if (password) {
     await room.setPassword(password);
   }
-  
+
   // 创建者加入房间
   room.addPlayer(userId, true);
-  
+
   // 保存房间
   await room.save();
-  
+
   // 格式化响应数据
   const formattedRoom = {
     id: room._id,
@@ -70,7 +69,7 @@ exports.createRoom = asyncHandler(async (req, res) => {
     teams: [],
     createTime: room.createTime
   };
-  
+
   res.status(201).json({
     status: 'success',
     data: { room: formattedRoom },
@@ -80,43 +79,43 @@ exports.createRoom = asyncHandler(async (req, res) => {
 
 // 获取房间列表
 exports.getRooms = asyncHandler(async (req, res) => {
-  const { 
-    status, 
-    gameType, 
-    playerCount, 
-    keyword, 
-    page = 1, 
-    limit = 20 
+  const {
+    status,
+    gameType,
+    playerCount,
+    keyword,
+    page = 1,
+    limit = 20
   } = req.query;
-  
+
   // 构建查询条件
   const query = {};
-  
+
   if (status && status !== 'all') {
     query.status = status;
   } else {
     // 默认不显示已结束的房间
     query.status = { $ne: 'ended' };
   }
-  
+
   if (gameType) {
     query.gameType = gameType;
   }
-  
+
   if (playerCount) {
     query.playerCount = parseInt(playerCount);
   }
-  
+
   if (keyword) {
     // 同时搜索房间名和创建者名
     query.$or = [
       { name: { $regex: keyword, $options: 'i' } }
     ];
   }
-  
+
   // 计算总数
   const total = await Room.countDocuments(query);
-  
+
   // 查询房间列表，增加对玩家和观众信息的填充
   const rooms = await Room.find(query)
     .sort({ createTime: -1 })
@@ -125,15 +124,15 @@ exports.getRooms = asyncHandler(async (req, res) => {
     .populate('creatorId', 'username avatar')
     .populate('players.userId', 'username avatar stats.totalGames stats.wins gameId')
     .populate('spectators.userId', 'username avatar stats.totalGames stats.wins gameId');
-  
+
   // 格式化响应数据
   const formattedRooms = rooms.map(room => {
     // 获取在线状态
     const onlineStatus = {};
-    
-    if (socketHelper) {
+
+    if (req.socketHelper) {
       try {
-        const onlineUsers = socketHelper.safeGetRoomOnlineUsers(room._id);
+        const onlineUsers = req.socketHelper.safeGetRoomOnlineUsers(room._id);
         room.players.forEach(player => {
           onlineStatus[player.userId._id] = onlineUsers.includes(player.userId._id.toString());
         });
@@ -159,7 +158,7 @@ exports.getRooms = asyncHandler(async (req, res) => {
         onlineStatus[spectator.userId._id] = true;
       });
     }
-    
+
     // 格式化玩家数据
     const players = room.players.map(player => {
       const user = player.userId;
@@ -177,7 +176,7 @@ exports.getRooms = asyncHandler(async (req, res) => {
         joinTime: player.joinTime
       };
     });
-    
+
     // 格式化观众数据
     const spectators = room.spectators.map(spectator => {
       const user = spectator.userId;
@@ -193,7 +192,7 @@ exports.getRooms = asyncHandler(async (req, res) => {
         joinTime: spectator.joinTime
       };
     });
-    
+
     return {
       id: room._id,
       name: room.name,
@@ -215,7 +214,7 @@ exports.getRooms = asyncHandler(async (req, res) => {
       teams: room.teams
     };
   });
-  
+
   res.status(200).json({
     status: 'success',
     data: { rooms: formattedRooms },
@@ -230,13 +229,13 @@ exports.getRooms = asyncHandler(async (req, res) => {
 // 获取房间详情
 exports.getRoom = asyncHandler(async (req, res) => {
   const roomId = req.params.roomId;
-  
+
   const room = await Room.findById(roomId)
     .populate('creatorId', 'username avatar')
     .populate('players.userId', 'username avatar stats.totalGames stats.wins gameId')
     .populate('spectators.userId', 'username avatar stats.totalGames stats.wins gameId')
     .populate('teams.captainId', 'username avatar');
-  
+
   if (!room) {
     return res.status(404).json({
       status: 'error',
@@ -244,13 +243,13 @@ exports.getRoom = asyncHandler(async (req, res) => {
       code: 3001
     });
   }
-  
+
   // 获取在线状态
   const onlineStatus = {};
-  
-  if (socketHelper) {
+
+  if (req.socketHelper) {
     try {
-      const onlineUsers = socketHelper.safeGetRoomOnlineUsers(roomId);
+      const onlineUsers = req.socketHelper.safeGetRoomOnlineUsers(roomId);
       room.players.forEach(player => {
         onlineStatus[player.userId._id] = onlineUsers.includes(player.userId._id.toString());
       });
@@ -276,7 +275,7 @@ exports.getRoom = asyncHandler(async (req, res) => {
       onlineStatus[spectator.userId._id] = true;
     });
   }
-  
+
   // 格式化玩家数据
   const players = room.players.map(player => {
     const user = player.userId;
@@ -294,7 +293,7 @@ exports.getRoom = asyncHandler(async (req, res) => {
       joinTime: player.joinTime
     };
   });
-  
+
   // 格式化观众数据
   const spectators = room.spectators.map(spectator => {
     const user = spectator.userId;
@@ -310,7 +309,7 @@ exports.getRoom = asyncHandler(async (req, res) => {
       joinTime: spectator.joinTime
     };
   });
-  
+
   // 格式化响应数据
   const formattedRoom = {
     id: room._id,
@@ -333,7 +332,7 @@ exports.getRoom = asyncHandler(async (req, res) => {
     startTime: room.startTime,
     endTime: room.endTime
   };
-  
+
   res.status(200).json({
     status: 'success',
     data: { room: formattedRoom }
@@ -345,10 +344,10 @@ exports.joinRoom = asyncHandler(async (req, res) => {
   const roomId = req.params.roomId;
   const userId = req.user.id;
   const { password } = req.body;
-  
+
   // 查找房间
   const room = await Room.findById(roomId);
-  
+
   if (!room) {
     return res.status(404).json({
       status: 'error',
@@ -356,11 +355,11 @@ exports.joinRoom = asyncHandler(async (req, res) => {
       code: 3001
     });
   }
-  
+
   // 验证密码
   if (room.hasPassword) {
     const isValid = await room.verifyPassword(password);
-    
+
     if (!isValid) {
       return res.status(401).json({
         status: 'error',
@@ -369,13 +368,13 @@ exports.joinRoom = asyncHandler(async (req, res) => {
       });
     }
   }
-  
+
   // 添加用户到观众席
   try {
     // 检查用户是否已经在房间中（玩家列表或观众席）
     const existingPlayer = room.players.find(p => p.userId.toString() === userId);
     const existingSpectator = room.spectators.find(s => s.userId.toString() === userId);
-    
+
     if (existingPlayer || existingSpectator) {
       return res.status(400).json({
         status: 'error',
@@ -383,23 +382,23 @@ exports.joinRoom = asyncHandler(async (req, res) => {
         code: 3005
       });
     }
-    
+
     const isCreator = !room.players.length && !room.spectators.length;
     const spectator = room.addSpectator(userId, isCreator);
-    
+
     // 如果是创建者，更新房间的creatorId
     if (isCreator) {
       room.creatorId = userId;
     }
-    
+
     await room.save();
-    
+
     // 获取用户信息
     const user = await User.findById(userId, 'username avatar stats.totalGames stats.wins gameId');
-    
+
     // 通知房间内其他用户
-    if (socketHelper) {
-      socketHelper.safeNotifyRoom(roomId, 'spectator.joined', {
+    if (req.socketHelper) {
+      req.socketHelper.safeNotifyRoom(roomId, 'spectator.joined', {
         userId: user._id,
         username: user.username,
         avatar: user.avatar,
@@ -408,17 +407,17 @@ exports.joinRoom = asyncHandler(async (req, res) => {
         isCreator: spectator.isCreator
       });
     }
-    
+
     // 获取更新后的房间详情
     const updatedRoom = await Room.findById(roomId)
       .populate('creatorId', 'username avatar')
       .populate('players.userId', 'username avatar stats.totalGames stats.wins gameId')
       .populate('spectators.userId', 'username avatar stats.totalGames stats.wins gameId')
       .populate('teams.captainId', 'username avatar');
-    
+
     // 获取在线状态
     const onlineStatus = {};
-    
+
     if (socketHelper) {
       try {
         const onlineUsers = socketHelper.safeGetRoomOnlineUsers(roomId);
@@ -447,7 +446,7 @@ exports.joinRoom = asyncHandler(async (req, res) => {
         onlineStatus[spectator.userId._id] = true;
       });
     }
-    
+
     // 格式化玩家数据
     const players = updatedRoom.players.map(player => {
       const user = player.userId;
@@ -465,7 +464,7 @@ exports.joinRoom = asyncHandler(async (req, res) => {
         joinTime: player.joinTime
       };
     });
-    
+
     // 格式化观众数据
     const spectators = updatedRoom.spectators.map(spectator => {
       const user = spectator.userId;
@@ -481,7 +480,7 @@ exports.joinRoom = asyncHandler(async (req, res) => {
         joinTime: spectator.joinTime
       };
     });
-    
+
     // 格式化响应数据
     const formattedRoom = {
       id: updatedRoom._id,
@@ -504,7 +503,7 @@ exports.joinRoom = asyncHandler(async (req, res) => {
       startTime: updatedRoom.startTime,
       endTime: updatedRoom.endTime
     };
-    
+
     res.status(200).json({
       status: 'success',
       data: { room: formattedRoom },
@@ -523,10 +522,10 @@ exports.joinRoom = asyncHandler(async (req, res) => {
 exports.leaveRoom = asyncHandler(async (req, res) => {
   const roomId = req.params.roomId;
   const userId = req.user.id;
-  
+
   // 查找房间
   const room = await Room.findById(roomId);
-  
+
   if (!room) {
     return res.status(404).json({
       status: 'error',
@@ -534,11 +533,11 @@ exports.leaveRoom = asyncHandler(async (req, res) => {
       code: 3001
     });
   }
-  
+
   // 检查用户是否在房间中
   const playerIndex = room.players.findIndex(p => p.userId.toString() === userId);
   const spectatorIndex = room.spectators.findIndex(s => s.userId.toString() === userId);
-  
+
   if (playerIndex === -1 && spectatorIndex === -1) {
     return res.status(400).json({
       status: 'error',
@@ -546,7 +545,7 @@ exports.leaveRoom = asyncHandler(async (req, res) => {
       code: 3002
     });
   }
-  
+
   // 检查房间状态和用户是否在玩家列表中
   if (room.status === 'gaming' && playerIndex !== -1) {
     return res.status(400).json({
@@ -555,26 +554,26 @@ exports.leaveRoom = asyncHandler(async (req, res) => {
       code: 3003
     });
   }
-  
+
   let isCreator = false;
-  
+
   // 处理离开的逻辑
   if (playerIndex !== -1) {
     // 玩家离开
     isCreator = room.players[playerIndex].isCreator;
     room.players.splice(playerIndex, 1);
-    
+
     // 通知类型
     leaveType = 'player';
   } else {
     // 观众离开
     isCreator = room.spectators[spectatorIndex].isCreator;
     room.spectators.splice(spectatorIndex, 1);
-    
+
     // 通知类型
     leaveType = 'spectator';
   }
-  
+
   // 如果是房主且还有其他人，转移房主权限
   if (isCreator) {
     // 首先检查玩家列表
@@ -583,28 +582,28 @@ exports.leaveRoom = asyncHandler(async (req, res) => {
       const earliestPlayer = room.players.reduce((earliest, player) => {
         return player.joinTime < earliest.joinTime ? player : earliest;
       }, room.players[0]);
-      
+
       // 转移房主权限
       earliestPlayer.isCreator = true;
       room.creatorId = earliestPlayer.userId;
-    } 
+    }
     // 然后检查观众席
     else if (room.spectators.length > 0) {
       // 找到加入时间最早的观众
       const earliestSpectator = room.spectators.reduce((earliest, spectator) => {
         return spectator.joinTime < earliest.joinTime ? spectator : earliest;
       }, room.spectators[0]);
-      
+
       // 转移房主权限
       earliestSpectator.isCreator = true;
       room.creatorId = earliestSpectator.userId;
     }
   }
-  
+
   // 如果房间没有玩家和观众了，删除房间
   if (room.players.length === 0 && room.spectators.length === 0) {
     await Room.deleteOne({ _id: roomId });
-    
+
     res.status(200).json({
       status: 'success',
       message: '已离开房间，房间已删除'
@@ -612,15 +611,15 @@ exports.leaveRoom = asyncHandler(async (req, res) => {
   } else {
     // 保存房间
     await room.save();
-    
+
     // 通知房间内其他人
-    if (socketHelper) {
-      socketHelper.safeNotifyRoom(roomId, `${leaveType}.left`, {
+    if (req.socketHelper) {
+      req.socketHelper.safeNotifyRoom(roomId, `${leaveType}.left`, {
         userId,
         newCreatorId: isCreator ? room.creatorId : null
       });
     }
-    
+
     res.status(200).json({
       status: 'success',
       message: '已离开房间'
@@ -632,10 +631,10 @@ exports.leaveRoom = asyncHandler(async (req, res) => {
 exports.startGame = asyncHandler(async (req, res) => {
   const roomId = req.params.roomId;
   const userId = req.user.id;
-  
+
   // 查找房间
   const room = await Room.findById(roomId);
-  
+
   if (!room) {
     return res.status(404).json({
       status: 'error',
@@ -643,7 +642,7 @@ exports.startGame = asyncHandler(async (req, res) => {
       code: 3001
     });
   }
-  
+
   // 检查是否是房主
   if (room.creatorId.toString() !== userId) {
     return res.status(403).json({
@@ -652,7 +651,7 @@ exports.startGame = asyncHandler(async (req, res) => {
       code: 1003
     });
   }
-  
+
   // 检查房间状态
   if (room.status !== 'waiting') {
     return res.status(400).json({
@@ -661,7 +660,7 @@ exports.startGame = asyncHandler(async (req, res) => {
       code: 3003
     });
   }
-  
+
   // 检查玩家人数
   if (room.players.length < room.playerCount) {
     return res.status(400).json({
@@ -670,16 +669,16 @@ exports.startGame = asyncHandler(async (req, res) => {
       code: 3004
     });
   }
-  
+
   try {
     // 分配队伍
     const teams = room.assignTeams();
     await room.save();
-    
+
     // 获取玩家详细信息
     const userIds = room.players.map(p => p.userId);
     const users = await User.find({ _id: { $in: userIds } }, 'username avatar');
-    
+
     // 将用户信息与玩家信息组合
     const players = room.players.map(player => {
       const user = users.find(u => u._id.toString() === player.userId.toString());
@@ -691,10 +690,10 @@ exports.startGame = asyncHandler(async (req, res) => {
         isCaptain: player.isCaptain
       };
     });
-    
+
     // 通知房间内所有玩家
-    if (socketHelper) {
-      socketHelper.safeNotifyRoom(roomId, 'game.started', {
+    if (req.socketHelper) {
+      req.socketHelper.safeNotifyRoom(roomId, 'game.started', {
         teams,
         players,
         pickMode: room.pickMode,
@@ -702,7 +701,7 @@ exports.startGame = asyncHandler(async (req, res) => {
         nextTeamPick: room.nextTeamPick
       });
     }
-    
+
     res.status(200).json({
       status: 'success',
       data: {
@@ -727,7 +726,7 @@ exports.selectPlayer = asyncHandler(async (req, res) => {
   const roomId = req.params.roomId;
   const userId = req.user.id;
   const { teamId, playerId } = req.body;
-  
+
   // 检查必要字段
   if (!teamId || !playerId) {
     return res.status(400).json({
@@ -736,10 +735,10 @@ exports.selectPlayer = asyncHandler(async (req, res) => {
       code: 1001
     });
   }
-  
+
   // 查找房间
   const room = await Room.findById(roomId);
-  
+
   if (!room) {
     return res.status(404).json({
       status: 'error',
@@ -747,7 +746,7 @@ exports.selectPlayer = asyncHandler(async (req, res) => {
       code: 3001
     });
   }
-  
+
   // 检查房间状态
   if (room.status !== 'picking') {
     return res.status(400).json({
@@ -756,14 +755,14 @@ exports.selectPlayer = asyncHandler(async (req, res) => {
       code: 3003
     });
   }
-  
+
   // 检查是否是队长
-  const captain = room.players.find(p => 
-    p.userId.toString() === userId && 
-    p.teamId === parseInt(teamId) && 
+  const captain = room.players.find(p =>
+    p.userId.toString() === userId &&
+    p.teamId === parseInt(teamId) &&
     p.isCaptain
   );
-  
+
   if (!captain) {
     return res.status(403).json({
       status: 'error',
@@ -771,14 +770,14 @@ exports.selectPlayer = asyncHandler(async (req, res) => {
       code: 1003
     });
   }
-  
+
   try {
     // 查看未分配的玩家数量
     const unassignedPlayers = room.players.filter(p => p.teamId === null);
-    
+
     // 队长选择队员
     const result = room.captainSelectPlayer(parseInt(teamId), playerId);
-    
+
     // 如果只剩最后一名队员，自动分配
     if (unassignedPlayers.length === 2) { // 选择当前玩家后，将只剩1名未分配的玩家
       const lastPlayer = room.players.find(p => p.teamId === null);
@@ -793,15 +792,15 @@ exports.selectPlayer = asyncHandler(async (req, res) => {
         room.nextTeamPick = null;
       }
     }
-    
+
     await room.save();
-    
+
     // 获取被选择的玩家信息
     const player = await User.findById(playerId, 'username avatar');
-    
+
     // 通知房间内所有玩家
-    if (socketHelper) {
-      socketHelper.safeNotifyRoom(roomId, 'player.selected', {
+    if (req.socketHelper) {
+      req.socketHelper.safeNotifyRoom(roomId, 'player.selected', {
         userId: playerId,
         username: player.username,
         avatar: player.avatar,
@@ -809,13 +808,13 @@ exports.selectPlayer = asyncHandler(async (req, res) => {
         nextTeamPick: result.nextTeam,
         remainingPlayers: result.remainingPlayers.length
       });
-      
+
       // 如果自动分配了最后一名队员，也通知
       if (unassignedPlayers.length === 2 && room.status === 'gaming') {
         const lastPlayer = room.players.find(p => p.userId.toString() !== playerId);
         const lastPlayerInfo = await User.findById(lastPlayer.userId, 'username avatar');
-        
-        socketHelper.safeNotifyRoom(roomId, 'player.selected', {
+
+        req.socketHelper.safeNotifyRoom(roomId, 'player.selected', {
           userId: lastPlayer.userId,
           username: lastPlayerInfo.username,
           avatar: lastPlayerInfo.avatar,
@@ -826,7 +825,7 @@ exports.selectPlayer = asyncHandler(async (req, res) => {
         });
       }
     }
-    
+
     res.status(200).json({
       status: 'success',
       data: {
@@ -854,7 +853,7 @@ exports.selectSide = asyncHandler(async (req, res) => {
   const roomId = req.params.roomId;
   const userId = req.user.id;
   const { teamId, side } = req.body;
-  
+
   // 检查必要字段
   if (!teamId || !side) {
     return res.status(400).json({
@@ -863,10 +862,10 @@ exports.selectSide = asyncHandler(async (req, res) => {
       code: 1001
     });
   }
-  
+
   // 查找房间
   const room = await Room.findById(roomId);
-  
+
   if (!room) {
     return res.status(404).json({
       status: 'error',
@@ -874,7 +873,7 @@ exports.selectSide = asyncHandler(async (req, res) => {
       code: 3001
     });
   }
-  
+
   // 检查房间状态
   if (room.status !== 'gaming') {
     return res.status(400).json({
@@ -883,14 +882,14 @@ exports.selectSide = asyncHandler(async (req, res) => {
       code: 3003
     });
   }
-  
+
   // 检查是否是队长
-  const captain = room.players.find(p => 
-    p.userId.toString() === userId && 
-    p.teamId === parseInt(teamId) && 
+  const captain = room.players.find(p =>
+    p.userId.toString() === userId &&
+    p.teamId === parseInt(teamId) &&
     p.isCaptain
   );
-  
+
   if (!captain) {
     return res.status(403).json({
       status: 'error',
@@ -898,12 +897,12 @@ exports.selectSide = asyncHandler(async (req, res) => {
       code: 1003
     });
   }
-  
+
   try {
     // 选择阵营
     const teams = room.selectSide(parseInt(teamId), side);
     await room.save();
-    
+
     // 通知房间内所有玩家
     if (socketHelper) {
       socketHelper.safeNotifyRoom(roomId, 'team.selected_side', {
@@ -912,7 +911,7 @@ exports.selectSide = asyncHandler(async (req, res) => {
         teams: room.teams
       });
     }
-    
+
     res.status(200).json({
       status: 'success',
       data: { teams },
@@ -931,28 +930,28 @@ exports.selectSide = asyncHandler(async (req, res) => {
 exports.getRoomMessages = asyncHandler(async (req, res) => {
   const roomId = req.params.roomId;
   const { channel = 'all', teamId, page = 1, limit = 50 } = req.query;
-  
+
   // 构建查询条件
   const query = { roomId };
-  
+
   if (channel !== 'all') {
     query.channel = channel;
-    
+
     if (channel === 'team' && teamId) {
       query.teamId = parseInt(teamId);
     }
   }
-  
+
   // 查询消息总数
   const total = await Message.countDocuments(query);
-  
+
   // 查询消息
   const messages = await Message.find(query)
     .sort({ createTime: -1 })
     .skip((parseInt(page) - 1) * parseInt(limit))
     .limit(parseInt(limit))
     .populate('userId', 'username avatar');
-  
+
   // 格式化消息
   const formattedMessages = messages.map(message => ({
     id: message._id,
@@ -965,7 +964,7 @@ exports.getRoomMessages = asyncHandler(async (req, res) => {
     teamId: message.teamId,
     createTime: message.createTime
   }));
-  
+
   res.status(200).json({
     status: 'success',
     data: { messages: formattedMessages },
@@ -982,7 +981,7 @@ exports.sendMessage = asyncHandler(async (req, res) => {
   const roomId = req.params.roomId;
   const userId = req.user.id;
   const { content, type = 'text', channel = 'public', teamId } = req.body;
-  
+
   // 检查消息内容
   if (!content) {
     return res.status(400).json({
@@ -991,10 +990,10 @@ exports.sendMessage = asyncHandler(async (req, res) => {
       code: 1001
     });
   }
-  
+
   // 查找房间
   const room = await Room.findById(roomId);
-  
+
   if (!room) {
     return res.status(404).json({
       status: 'error',
@@ -1002,11 +1001,11 @@ exports.sendMessage = asyncHandler(async (req, res) => {
       code: 3001
     });
   }
-  
+
   // 检查用户是否在房间中
   const player = room.players.find(p => p.userId.toString() === userId);
   const isSpectator = !player;
-  
+
   if (!player && !isSpectator) {
     return res.status(403).json({
       status: 'error',
@@ -1014,7 +1013,7 @@ exports.sendMessage = asyncHandler(async (req, res) => {
       code: 1003
     });
   }
-  
+
   // 检查频道权限
   if (channel === 'team') {
     if (!teamId) {
@@ -1024,7 +1023,7 @@ exports.sendMessage = asyncHandler(async (req, res) => {
         code: 1001
       });
     }
-    
+
     if (isSpectator) {
       return res.status(403).json({
         status: 'error',
@@ -1032,7 +1031,7 @@ exports.sendMessage = asyncHandler(async (req, res) => {
         code: 1003
       });
     }
-    
+
     if (player.teamId !== parseInt(teamId)) {
       return res.status(403).json({
         status: 'error',
@@ -1041,7 +1040,7 @@ exports.sendMessage = asyncHandler(async (req, res) => {
       });
     }
   }
-  
+
   // 创建消息
   const message = new Message({
     roomId,
@@ -1052,12 +1051,12 @@ exports.sendMessage = asyncHandler(async (req, res) => {
     teamId: channel === 'team' ? parseInt(teamId) : null,
     createTime: Date.now()
   });
-  
+
   await message.save();
-  
+
   // 获取用户信息
   const user = await User.findById(userId, 'username avatar');
-  
+
   // 格式化消息
   const formattedMessage = {
     id: message._id,
@@ -1070,13 +1069,13 @@ exports.sendMessage = asyncHandler(async (req, res) => {
     teamId: message.teamId,
     createTime: message.createTime
   };
-  
+
   // 通过Socket.IO广播消息
   if (socketHelper) {
     if (channel === 'team') {
       // 发送给队伍成员
       socketHelper.safeNotifyTeam(roomId, parseInt(teamId), 'new_message', formattedMessage);
-      
+
       // 同时发送给观众，但标记为队伍消息
       formattedMessage.isTeamMessage = true;
       socketHelper.safeNotifySpectators(roomId, 'new_message', formattedMessage);
@@ -1085,7 +1084,7 @@ exports.sendMessage = asyncHandler(async (req, res) => {
       socketHelper.safeNotifyRoom(roomId, 'new_message', formattedMessage);
     }
   }
-  
+
   res.status(201).json({
     status: 'success',
     data: { message: formattedMessage }
@@ -1097,7 +1096,7 @@ exports.inviteFriends = asyncHandler(async (req, res) => {
   const roomId = req.params.roomId;
   const inviterId = req.user.id;
   const { friendIds } = req.body;
-  
+
   // 检查好友ID列表
   if (!friendIds || !Array.isArray(friendIds) || friendIds.length === 0) {
     return res.status(400).json({
@@ -1106,10 +1105,10 @@ exports.inviteFriends = asyncHandler(async (req, res) => {
       code: 1001
     });
   }
-  
+
   // 查找房间
   const room = await Room.findById(roomId);
-  
+
   if (!room) {
     return res.status(404).json({
       status: 'error',
@@ -1117,10 +1116,10 @@ exports.inviteFriends = asyncHandler(async (req, res) => {
       code: 3001
     });
   }
-  
+
   // 检查用户是否在房间中
   const playerInRoom = room.players.find(p => p.userId.toString() === inviterId);
-  
+
   if (!playerInRoom) {
     return res.status(403).json({
       status: 'error',
@@ -1128,7 +1127,7 @@ exports.inviteFriends = asyncHandler(async (req, res) => {
       code: 1003
     });
   }
-  
+
   // 检查房间状态
   if (room.status !== 'waiting') {
     return res.status(400).json({
@@ -1137,7 +1136,7 @@ exports.inviteFriends = asyncHandler(async (req, res) => {
       code: 3003
     });
   }
-  
+
   // 检查房间是否已满
   if (room.players.length >= room.playerCount) {
     return res.status(400).json({
@@ -1146,21 +1145,21 @@ exports.inviteFriends = asyncHandler(async (req, res) => {
       code: 3002
     });
   }
-  
+
   // 查找现有邀请
   const existingInvitations = await Invitation.find({
     roomId,
     userId: { $in: friendIds },
     status: 'pending'
   });
-  
+
   // 已邀请的好友ID
   const existingFriendIds = existingInvitations.map(inv => inv.userId.toString());
-  
+
   // 创建新邀请
   const newInvitations = [];
   const failedInvitations = [];
-  
+
   for (const friendId of friendIds) {
     // 跳过已邀请的好友
     if (existingFriendIds.includes(friendId)) {
@@ -1170,7 +1169,7 @@ exports.inviteFriends = asyncHandler(async (req, res) => {
       });
       continue;
     }
-    
+
     // 检查是否已在房间中
     const alreadyInRoom = room.players.some(p => p.userId.toString() === friendId);
     if (alreadyInRoom) {
@@ -1180,7 +1179,7 @@ exports.inviteFriends = asyncHandler(async (req, res) => {
       });
       continue;
     }
-    
+
     // 创建邀请
     try {
       const invitation = new Invitation({
@@ -1190,7 +1189,7 @@ exports.inviteFriends = asyncHandler(async (req, res) => {
         status: 'pending',
         expireTime: new Date(Date.now() + 30 * 60 * 1000) // 30分钟后过期
       });
-      
+
       await invitation.save();
       newInvitations.push(invitation);
     } catch (error) {
@@ -1200,22 +1199,22 @@ exports.inviteFriends = asyncHandler(async (req, res) => {
       });
     }
   }
-  
+
   // 通知被邀请的好友
-  if (socketHelper) {
+  if (req.socketHelper) {
     for (const invitation of newInvitations) {
-      socketHelper.safeNotifyUser(invitation.userId, 'room.invited', {
+      req.socketHelper.safeNotifyUser(invitation.userId, 'room.invited', {
         id: invitation._id,
         roomId,
         roomName: room.name,
-        inviterId: userId,
+        inviterId: inviterId,
         inviterName: req.user.username,
         createTime: invitation.createTime,
         expireTime: invitation.expireTime
       });
     }
   }
-  
+
   res.status(200).json({
     status: 'success',
     data: {
@@ -1235,10 +1234,10 @@ exports.inviteFriends = asyncHandler(async (req, res) => {
 exports.joinAsPlayer = asyncHandler(async (req, res) => {
   const roomId = req.params.roomId;
   const userId = req.user.id;
-  
+
   // 查找房间
   const room = await Room.findById(roomId);
-  
+
   if (!room) {
     return res.status(404).json({
       status: 'error',
@@ -1246,7 +1245,7 @@ exports.joinAsPlayer = asyncHandler(async (req, res) => {
       code: 3001
     });
   }
-  
+
   // 检查房间状态
   if (room.status !== 'waiting') {
     return res.status(400).json({
@@ -1255,7 +1254,7 @@ exports.joinAsPlayer = asyncHandler(async (req, res) => {
       code: 3003
     });
   }
-  
+
   // 检查玩家列表是否已满
   if (room.players.length >= room.playerCount) {
     return res.status(400).json({
@@ -1264,7 +1263,7 @@ exports.joinAsPlayer = asyncHandler(async (req, res) => {
       code: 3002
     });
   }
-  
+
   // 检查用户是否在观众席中
   const spectatorIndex = room.spectators.findIndex(s => s.userId.toString() === userId);
   if (spectatorIndex === -1) {
@@ -1274,42 +1273,39 @@ exports.joinAsPlayer = asyncHandler(async (req, res) => {
       code: 3006
     });
   }
-  
+
   try {
     // 将用户从观众席移动到玩家列表
     const player = room.moveSpectatorToPlayer(userId);
     await room.save();
-    
+
     // 获取用户信息
     const user = await User.findById(userId, 'username avatar stats.totalGames stats.wins gameId');
-    
+
     // 通知房间内其他用户
-    if (socketHelper) {
-      socketHelper.safeNotifyRoom(roomId, 'player.joined', {
+    if (req.socketHelper) {
+      // 使用新的专用方法通知观众席到玩家列表的移动
+      req.socketHelper.safeNotifySpectatorToPlayer(roomId, {
         userId: user._id,
         username: user.username,
         avatar: user.avatar,
         totalGames: user.stats.totalGames,
         wins: user.stats.wins,
-        isCreator: player.isCreator
-      });
-      
-      socketHelper.safeNotifyRoom(roomId, 'spectator.left', {
-        userId: user._id,
-        username: user.username
+        isCreator: player.isCreator,
+        roomId: roomId
       });
     }
-    
+
     // 获取更新后的房间详情
     const updatedRoom = await Room.findById(roomId)
       .populate('creatorId', 'username avatar')
       .populate('players.userId', 'username avatar stats.totalGames stats.wins gameId')
       .populate('spectators.userId', 'username avatar stats.totalGames stats.wins gameId')
       .populate('teams.captainId', 'username avatar');
-    
+
     // 获取在线状态
     const onlineStatus = {};
-    
+
     if (socketHelper) {
       try {
         const onlineUsers = socketHelper.safeGetRoomOnlineUsers(roomId);
@@ -1338,7 +1334,7 @@ exports.joinAsPlayer = asyncHandler(async (req, res) => {
         onlineStatus[spectator.userId._id] = true;
       });
     }
-    
+
     // 格式化玩家数据
     const players = updatedRoom.players.map(player => {
       const user = player.userId;
@@ -1356,7 +1352,7 @@ exports.joinAsPlayer = asyncHandler(async (req, res) => {
         joinTime: player.joinTime
       };
     });
-    
+
     // 格式化观众数据
     const spectators = updatedRoom.spectators.map(spectator => {
       const user = spectator.userId;
@@ -1372,7 +1368,7 @@ exports.joinAsPlayer = asyncHandler(async (req, res) => {
         joinTime: spectator.joinTime
       };
     });
-    
+
     // 格式化响应数据
     const formattedRoom = {
       id: updatedRoom._id,
@@ -1395,7 +1391,7 @@ exports.joinAsPlayer = asyncHandler(async (req, res) => {
       startTime: updatedRoom.startTime,
       endTime: updatedRoom.endTime
     };
-    
+
     res.status(200).json({
       status: 'success',
       data: { room: formattedRoom },
@@ -1414,10 +1410,10 @@ exports.joinAsPlayer = asyncHandler(async (req, res) => {
 exports.joinAsSpectator = asyncHandler(async (req, res) => {
   const roomId = req.params.roomId;
   const userId = req.user.id;
-  
+
   // 查找房间
   const room = await Room.findById(roomId);
-  
+
   if (!room) {
     return res.status(404).json({
       status: 'error',
@@ -1425,7 +1421,7 @@ exports.joinAsSpectator = asyncHandler(async (req, res) => {
       code: 3001
     });
   }
-  
+
   // 检查房间状态
   if (room.status === 'gaming') {
     return res.status(400).json({
@@ -1434,7 +1430,7 @@ exports.joinAsSpectator = asyncHandler(async (req, res) => {
       code: 3003
     });
   }
-  
+
   // 检查用户是否在玩家列表中
   const playerIndex = room.players.findIndex(p => p.userId.toString() === userId);
   if (playerIndex === -1) {
@@ -1444,42 +1440,39 @@ exports.joinAsSpectator = asyncHandler(async (req, res) => {
       code: 3006
     });
   }
-  
+
   try {
     // 将用户从玩家列表移动到观众席
     const spectator = room.movePlayerToSpectator(userId);
     await room.save();
-    
+
     // 获取用户信息
     const user = await User.findById(userId, 'username avatar stats.totalGames stats.wins gameId');
-    
+
     // 通知房间内其他用户
-    if (socketHelper) {
-      socketHelper.safeNotifyRoom(roomId, 'spectator.joined', {
+    if (req.socketHelper) {
+      // 使用新的专用方法通知玩家列表到观众席的移动
+      req.socketHelper.safeNotifyPlayerToSpectator(roomId, {
         userId: user._id,
         username: user.username,
         avatar: user.avatar,
         totalGames: user.stats.totalGames,
         wins: user.stats.wins,
-        isCreator: spectator.isCreator
-      });
-      
-      socketHelper.safeNotifyRoom(roomId, 'player.left', {
-        userId: user._id,
-        username: user.username
+        isCreator: spectator.isCreator,
+        roomId: roomId
       });
     }
-    
+
     // 获取更新后的房间详情
     const updatedRoom = await Room.findById(roomId)
       .populate('creatorId', 'username avatar')
       .populate('players.userId', 'username avatar stats.totalGames stats.wins gameId')
       .populate('spectators.userId', 'username avatar stats.totalGames stats.wins gameId')
       .populate('teams.captainId', 'username avatar');
-    
+
     // 获取在线状态
     const onlineStatus = {};
-    
+
     if (socketHelper) {
       try {
         const onlineUsers = socketHelper.safeGetRoomOnlineUsers(roomId);
@@ -1508,7 +1501,7 @@ exports.joinAsSpectator = asyncHandler(async (req, res) => {
         onlineStatus[spectator.userId._id] = true;
       });
     }
-    
+
     // 格式化玩家数据
     const players = updatedRoom.players.map(player => {
       const user = player.userId;
@@ -1526,7 +1519,7 @@ exports.joinAsSpectator = asyncHandler(async (req, res) => {
         joinTime: player.joinTime
       };
     });
-    
+
     // 格式化观众数据
     const spectators = updatedRoom.spectators.map(spectator => {
       const user = spectator.userId;
@@ -1542,7 +1535,7 @@ exports.joinAsSpectator = asyncHandler(async (req, res) => {
         joinTime: spectator.joinTime
       };
     });
-    
+
     // 格式化响应数据
     const formattedRoom = {
       id: updatedRoom._id,
@@ -1565,7 +1558,7 @@ exports.joinAsSpectator = asyncHandler(async (req, res) => {
       startTime: updatedRoom.startTime,
       endTime: updatedRoom.endTime
     };
-    
+
     res.status(200).json({
       status: 'success',
       data: { room: formattedRoom },
@@ -1585,7 +1578,7 @@ exports.kickPlayer = asyncHandler(async (req, res) => {
   const roomId = req.params.roomId;
   const userId = req.user.id;
   const { targetUserId } = req.body;
-  
+
   // 检查必要字段
   if (!targetUserId) {
     return res.status(400).json({
@@ -1594,10 +1587,10 @@ exports.kickPlayer = asyncHandler(async (req, res) => {
       code: 1001
     });
   }
-  
+
   // 查找房间
   const room = await Room.findById(roomId);
-  
+
   if (!room) {
     return res.status(404).json({
       status: 'error',
@@ -1605,7 +1598,7 @@ exports.kickPlayer = asyncHandler(async (req, res) => {
       code: 3001
     });
   }
-  
+
   // 检查是否是房主
   if (room.creatorId.toString() !== userId) {
     return res.status(403).json({
@@ -1614,11 +1607,11 @@ exports.kickPlayer = asyncHandler(async (req, res) => {
       code: 1003
     });
   }
-  
+
   // 检查目标用户是否在房间中
   const playerIndex = room.players.findIndex(p => p.userId.toString() === targetUserId);
   const spectatorIndex = room.spectators.findIndex(s => s.userId.toString() === targetUserId);
-  
+
   if (playerIndex === -1 && spectatorIndex === -1) {
     return res.status(400).json({
       status: 'error',
@@ -1626,7 +1619,7 @@ exports.kickPlayer = asyncHandler(async (req, res) => {
       code: 3002
     });
   }
-  
+
   // 不能踢出自己
   if (targetUserId === userId) {
     return res.status(400).json({
@@ -1635,10 +1628,10 @@ exports.kickPlayer = asyncHandler(async (req, res) => {
       code: 3002
     });
   }
-  
+
   // 使用removeUser方法移除用户
   const result = room.removeUser(targetUserId);
-  
+
   if (!result) {
     return res.status(400).json({
       status: 'error',
@@ -1646,12 +1639,12 @@ exports.kickPlayer = asyncHandler(async (req, res) => {
       code: 3002
     });
   }
-  
+
   const { type: leaveType } = result;
-  
+
   // 保存房间
   await room.save();
-  
+
   // 通知房间内其他人
   if (socketHelper) {
     if (leaveType === 'player') {
@@ -1678,9 +1671,9 @@ exports.kickPlayer = asyncHandler(async (req, res) => {
       });
     }
   }
-  
+
   res.status(200).json({
     status: 'success',
     message: '已踢出用户'
   });
-}); 
+});

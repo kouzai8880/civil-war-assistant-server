@@ -18,7 +18,7 @@ const config = {
   
   // 数据库配置
   db: {
-    uri: process.env.MONGO_URI || 'mongodb://root:r7s7dhr7@civil-war-assistant-db-95d80a-mongodb.ns-pdcg8wzg.svc:27017',
+    uri: process.env.MONGO_URI,
     options: {
       useNewUrlParser: true,
       useUnifiedTopology: true

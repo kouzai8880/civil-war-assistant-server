@@ -8,10 +8,10 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const http = require('http');
 const socketIo = require('socket.io');
-const socketHandler = require('./utils/socket');
 const { errorHandler } = require('./middleware/errorHandler');
 const config = require('./config');
 const { initSocketServer } = require('./utils/socket');
+const socketHelper = require('./utils/socketHelper');
 const lobby = require('./utils/lobby');
 const lobbyRoutes = require('./routes/lobby');
 
@@ -47,6 +47,15 @@ app.use((req, res, next) => {
 // 初始化Socket.IO服务
 const io = initSocketServer(server);
 
+// 初始化socketHelper
+socketHelper.init(io);
+
+// 将socketHelper注入到req对象中
+app.use((req, res, next) => {
+  req.socketHelper = socketHelper;
+  next();
+});
+
 // 注册大厅聊天事件处理
 io.on('connection', (socket) => {
   // 加入大厅
@@ -57,12 +66,12 @@ io.on('connection', (socket) => {
       avatar: socket.handshake.query.avatar
     }, socket);
   });
-  
+
   // 离开大厅
   socket.on('leaveLobby', () => {
     lobby.leaveLobby(socket.userId);
   });
-  
+
   // 发送大厅消息
   socket.on('lobbyMessage', (message) => {
     try {
@@ -73,14 +82,14 @@ io.on('connection', (socket) => {
         content: message.content,
         type: message.type
       });
-      
+
       // 广播消息给所有大厅用户
       io.emit('lobbyMessage', newMessage);
     } catch (error) {
       socket.emit('error', { message: error.message });
     }
   });
-  
+
   // 获取历史消息
   socket.on('getLobbyHistory', (options, callback) => {
     try {
@@ -90,18 +99,18 @@ io.on('connection', (socket) => {
       socket.emit('error', { message: error.message });
     }
   });
-  
+
   // 更新用户状态
   socket.on('updateStatus', (data) => {
     lobby.updateUserStatus(socket.userId, data.status, data.currentRoom);
   });
-  
+
   // 获取用户详情
   socket.on('getUserDetails', (userId, callback) => {
     const userDetails = lobby.getUserDetails(userId);
     callback({ user: userDetails });
   });
-  
+
   // 断开连接
   socket.on('disconnect', () => {
     lobby.leaveLobby(socket.userId);
@@ -141,21 +150,25 @@ app.use((req, res) => {
   });
 });
 
+// 启动服务器函数
+const startServer = () => {
+  const PORT = config.server.port;
+
+  server.listen(PORT, () => {
+    console.log(`服务器已启动，监听端口 ${PORT}`);
+  });
+};
+
 // 数据库连接
-mongoose.connect(process.env.MONGO_URI || 'mongodb://root:r7s7dhr7@civil-war-assistant-db-95d80a-mongodb.ns-pdcg8wzg.svc:27017')
+mongoose.connect(process.env.MONGO_URI)
   .then(() => {
     console.log('MongoDB 连接成功');
-    
-    // 启动服务器
-    const PORT = config.server.port;
-    
-    server.listen(PORT, () => {
-      console.log(`服务器已启动，监听端口 ${PORT}`);
-    });
+    startServer();
   })
   .catch(err => {
     console.error('MongoDB 连接失败:', err.message);
-    process.exit(1);
+    console.log('将以无数据库模式启动服务器...');
+    startServer();
   });
 
 // 优雅关闭
@@ -184,4 +197,4 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('未处理的Promise拒绝:', reason);
 });
 
-module.exports = { app, server }; 
+module.exports = { app, server };

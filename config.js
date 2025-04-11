@@ -12,7 +12,7 @@ module.exports = {
   
   // 数据库配置
   database: {
-    mongoURI: process.env.MONGO_URI || 'mongodb://root:r7s7dhr7@civil-war-assistant-db-95d80a-mongodb.ns-pdcg8wzg.svc:27017'
+    mongoURI: process.env.MONGO_URI
   },
   
   // 测试配置
