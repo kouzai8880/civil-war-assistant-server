@@ -112,15 +112,69 @@ socket.emit('voiceData', {
 
 #### `sendMessage`
 
-发送聊天消息。
+发送聊天消息。这个事件使用回调函数返回结果，可以直接通过Socket发送消息而不需要使用HTTP API。
 
 ```javascript
 socket.emit('sendMessage', {
   roomId: '房间ID',
   content: '消息内容',
-  channel: 'public', // 'public' 或 'team'
+  type: 'text', // 可选，默认为'text'
+  channel: 'public', // 可选，默认为'public'，可选值: 'public' 或 'team'
   teamId: 1 // 如果channel为'team'，需要指定队伍ID
+}, (response) => {
+  // 回调函数接收发送结果
+  if (response.status === 'success') {
+    // 消息发送成功
+    const message = response.data.message;
+    // 可以在本地显示消息，也可以等待new_message事件
+  } else {
+    // 处理错误
+    console.error(response.message);
+  }
 });
+```
+
+**参数说明：**
+
+- `roomId`：必选，房间ID
+- `content`：必选，消息内容
+- `type`：可选，消息类型，默认为'text'
+- `channel`：可选，消息频道，默认为'public'，可选值: 'public'(公共频道) 或 'team'(队伍频道)
+- `teamId`：当channel为'team'时必选，指定发送消息的队伍ID
+
+**权限要求：**
+
+- 用户必须在房间中（玩家或观众）
+- 当channel为'team'时，用户必须是该队伍的玩家，观众不能发送队伍消息
+
+**响应格式：**
+
+```javascript
+// 成功响应
+{
+  status: 'success',
+  data: {
+    message: {
+      id: '消息ID',
+      userId: '发送者ID',
+      username: '发送者用户名',
+      avatar: '发送者头像',
+      content: '消息内容',
+      type: 'text',
+      channel: 'public',
+      teamId: null,
+      createTime: '2023-05-01T12:00:00Z'
+    }
+  },
+  message: '消息发送成功'
+}
+
+// 错误响应
+{
+  status: 'error',
+  message: '错误信息',
+  code: 3002
+}
 ```
 
 ## 客户端监听的事件
@@ -129,14 +183,23 @@ socket.emit('sendMessage', {
 
 #### `roomJoined`
 
-成功加入房间后触发，包含完整的房间数据。
+成功加入房间后触发，包含完整的房间数据和历史聊天记录。
 
 ```javascript
 socket.on('roomJoined', (response) => {
-  // response: { status: 'success', data: { room: {...} }, message: '加入房间成功，已进入观众席' }
+  // response: {
+  //   status: 'success',
+  //   data: {
+  //     room: {...},  // 房间详情
+  //     messages: [...]  // 历史聊天记录，最多50条，按时间正序排列
+  //   },
+  //   message: '加入房间成功，已进入观众席'
+  // }
   if (response.status === 'success') {
     const roomData = response.data.room;
+    const chatHistory = response.data.messages;
     // 更新UI或状态管理
+    // 显示历史聊天记录
   }
 });
 ```
@@ -148,7 +211,13 @@ socket.on('roomJoined', (response) => {
 ```javascript
 // 通过回调函数接收响应
 socket.emit('getRoomDetail', { roomId: '123456' }, (response) => {
-  // response: { status: 'success', data: { room: {...} }, message: '获取房间详情成功' }
+  // response: {
+  //   status: 'success',
+  //   data: {
+  //     room: {...}  // 房间详情
+  //   },
+  //   message: '获取房间详情成功'
+  // }
   if (response.status === 'success') {
     const roomData = response.data.room;
     // 更新UI或状态管理
@@ -300,12 +369,38 @@ socket.on('teamUpdate', (data) => {
 
 #### `new_message`
 
-收到新消息时触发。
+收到新消息时触发。注意：消息发送者不会收到自己发送的消息。
 
 ```javascript
 socket.on('new_message', (message) => {
-  // message: { id: '...', userId: '...', username: '...', avatar: '...', content: '...', type: 'text', channel: 'public'|'team', teamId?: number, createTime: '...', isTeamMessage?: boolean }
+  // message: {
+  //   id: '消息ID',
+  //   userId: '发送者ID',
+  //   username: '发送者用户名',
+  //   avatar: '发送者头像',
+  //   content: '消息内容',
+  //   type: 'text',
+  //   channel: 'public'|'team',
+  //   teamId: null,
+  //   createTime: '2023-05-01T12:00:00Z',
+  //   isTeamMessage?: boolean  // 当队伍消息发送给观众时，此字段为true
+  // }
   // 显示新消息
+});
+```
+
+#### `system_message`
+
+收到系统消息时触发，如用户加入/离开房间、角色变更等。
+
+```javascript
+socket.on('system_message', (message) => {
+  // message: {
+  //   type: 'system',
+  //   content: '用户名 加入了房间',
+  //   createTime: '2023-05-01T12:00:00Z'
+  // }
+  // 将系统消息添加到聊天列表，通常使用不同的样式显示
 });
 ```
 

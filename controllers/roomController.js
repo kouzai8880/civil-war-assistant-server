@@ -1071,18 +1071,37 @@ exports.sendMessage = asyncHandler(async (req, res) => {
   };
 
   // 通过Socket.IO广播消息
-  if (socketHelper) {
+  console.log(`[消息处理] 准备发送消息，房间ID: ${roomId}, 发送者: ${userId}, 频道: ${channel}`);
+
+  if (req.socketHelper) {
     if (channel === 'team') {
+      console.log(`[消息处理] 发送队伍消息，队伍ID: ${teamId}, 消息ID: ${message._id}`);
+
       // 发送给队伍成员
-      socketHelper.safeNotifyTeam(roomId, parseInt(teamId), 'new_message', formattedMessage);
+      const teamNotifyResult = req.socketHelper.safeNotifyTeam(roomId, parseInt(teamId), 'new_message', formattedMessage);
+      console.log(`[消息处理] 队伍消息发送结果: ${teamNotifyResult ? '成功' : '失败'}`);
 
       // 同时发送给观众，但标记为队伍消息
       formattedMessage.isTeamMessage = true;
-      socketHelper.safeNotifySpectators(roomId, 'new_message', formattedMessage);
+      const spectatorsNotifyResult = req.socketHelper.safeNotifySpectators(roomId, 'new_message', formattedMessage);
+      console.log(`[消息处理] 观众消息发送结果: ${spectatorsNotifyResult ? '成功' : '失败'}`);
     } else {
-      // 公共消息发送给所有人
-      socketHelper.safeNotifyRoom(roomId, 'new_message', formattedMessage);
+      console.log(`[消息处理] 发送公共消息，消息ID: ${message._id}`);
+
+      // 公共消息发送给房间内除了发送者以外的所有人
+      const roomNotifyResult = req.socketHelper.safeNotifyRoom(roomId, 'new_message', formattedMessage, userId);
+      console.log(`[消息处理] 公共消息发送结果: ${roomNotifyResult ? '成功' : '失败'}`);
+
+      // 获取房间在线用户数
+      try {
+        const onlineUsers = req.socketHelper.safeGetRoomOnlineUsers(roomId);
+        console.log(`[消息处理] 房间在线用户数: ${onlineUsers.length}, 用户列表: ${JSON.stringify(onlineUsers)}`);
+      } catch (error) {
+        console.error(`[消息处理] 获取房间在线用户失败:`, error);
+      }
     }
+  } else {
+    console.error(`[消息处理] socketHelper不可用，无法发送消息`);
   }
 
   res.status(201).json({

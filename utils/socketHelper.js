@@ -15,10 +15,10 @@ exports.init = (io) => {
 };
 
 // 安全调用通知房间方法
-exports.safeNotifyRoom = (roomId, event, data) => {
+exports.safeNotifyRoom = (roomId, event, data, excludeUserId = null) => {
   try {
     if (socketModule && typeof socketModule.notifyRoom === 'function') {
-      return socketModule.notifyRoom(roomId, event, data);
+      return socketModule.notifyRoom(roomId, event, data, excludeUserId);
     }
   } catch (error) {
     console.error(`通知房间${roomId}事件${event}失败:`, error);
