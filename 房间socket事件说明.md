@@ -214,13 +214,16 @@ socket.emit('getRoomDetail', { roomId: '123456' }, (response) => {
   // response: {
   //   status: 'success',
   //   data: {
-  //     room: {...}  // 房间详情
+  //     room: {...},  // 房间详情
+  //     messages: [...]  // 历史聊天记录，最多50条，按时间正序排列
   //   },
   //   message: '获取房间详情成功'
   // }
   if (response.status === 'success') {
     const roomData = response.data.room;
+    const chatHistory = response.data.messages;
     // 更新UI或状态管理
+    // 显示历史聊天记录
   }
 });
 ```
@@ -343,6 +346,67 @@ socket.on('game.started', (data) => {
 });
 ```
 
+#### `player.selected`
+
+队长选择队员时触发。
+
+```javascript
+socket.on('player.selected', (data) => {
+  // data: {
+  //   userId: '被选择的玩家ID',
+  //   username: '被选择的玩家用户名',
+  //   avatar: '被选择的玩家头像',
+  //   teamId: 1, // 被选择加入的队伍ID
+  //   nextTeamPick: 2, // 下一个选人的队伍ID，如果为null则表示选人阶段结束
+  //   remainingPlayers: 3, // 剩余未选择的玩家数量
+  //   isAutoAssigned: false // 是否是自动分配的（最后一名玩家）
+  // }
+
+  // 更新UI，显示玩家已被选择
+  updatePlayerTeam(data.userId, data.teamId);
+
+  // 如果是当前用户是下一个选人的队伍的队长，显示选人界面
+  if (data.nextTeamPick === myTeamId && isCaptain) {
+    showPlayerSelectionUI();
+  }
+
+  // 如果选人阶段结束，更新UI
+  if (data.nextTeamPick === null) {
+    updateGameStatus('gaming');
+  }
+});
+```
+
+#### `team.selected_side`
+
+队长选择红蓝方时触发。
+
+```javascript
+socket.on('team.selected_side', (data) => {
+  // data: {
+  //   teamId: 1, // 选择阵营的队伍ID
+  //   side: "blue", // 选择的阵营
+  //   teams: [ // 更新后的所有队伍信息
+  //     {
+  //       id: 1,
+  //       name: "蓝队",
+  //       side: "blue",
+  //       captainId: "u123456"
+  //     },
+  //     {
+  //       id: 2,
+  //       name: "红队",
+  //       side: "red",
+  //       captainId: "u789012"
+  //     }
+  //   ]
+  // }
+
+  // 更新UI，显示队伍阵营
+  updateTeamSides(data.teams);
+});
+```
+
 #### `playerStatusUpdate`
 
 玩家状态更新时触发。
@@ -391,18 +455,32 @@ socket.on('new_message', (message) => {
 
 #### `system_message`
 
-收到系统消息时触发，如用户加入/离开房间、角色变更等。
+收到系统消息时触发，如用户加入/离开房间、角色变更、语音状态变更等。
 
 ```javascript
 socket.on('system_message', (message) => {
   // message: {
-  //   type: 'system',
-  //   content: '用户名 加入了房间',
-  //   createTime: '2023-05-01T12:00:00Z'
+  //   id: '消息ID', // 数据库中的消息ID
+  //   type: 'system', // 消息类型始终为'system'
+  //   content: '用户名 加入了房间', // 系统消息内容
+  //   createTime: '2023-05-01T12:00:00Z', // 消息创建时间
+  //   updateTime: '2023-05-01T12:00:00Z' // 消息发送时间
   // }
   // 将系统消息添加到聊天列表，通常使用不同的样式显示
 });
 ```
+
+系统消息类型包括：
+
+1. **用户加入房间**：`用户名 加入了房间`
+2. **用户离开房间**：`用户名 离开了房间`
+3. **用户断开连接**：`用户名 断开了连接`
+4. **用户加入玩家列表**：`用户名 从观众席加入了玩家列表`
+5. **用户加入观众席**：`用户名 从玩家列表加入了观众席`
+6. **用户被选入队伍**：`用户名 被选入蓝队/红队`
+7. **队伍选择阵营**：`蓝队/红队选择了蓝方/红方，游戏即将开始`
+8. **用户开始语音**：`用户名 开始了语音通信`
+9. **用户结束语音**：`用户名 结束了语音通信`
 
 ### 语音相关事件
 
@@ -598,6 +676,11 @@ socket.emit('getRoomDetail', { roomId: '123456' }, (response) => {
   if (response.status === 'success') {
     // 更新UI，显示房间信息
     updateRoomUI(response.data.room);
+
+    // 显示历史聊天记录
+    if (response.data.messages && response.data.messages.length > 0) {
+      displayChatHistory(response.data.messages);
+    }
 
     // 根据当前用户角色更新UI
     const isPlayer = response.data.room.players.some(p => p.userId === currentUserId);

@@ -148,3 +148,43 @@ exports.safeNotifyPlayerToSpectator = (roomId, userData) => {
   }
   return false;
 };
+
+// 发送系统消息并保存到数据库
+exports.sendSystemMessage = async (roomId, content, excludeUserId = null) => {
+  try {
+    // 创建系统消息
+    const Message = require('../models/Message');
+    const systemMessage = new Message({
+      roomId,
+      userId: null, // 系统消息没有发送者
+      content,
+      type: 'system',
+      channel: 'public',
+      createTime: new Date()
+    });
+
+    // 保存到数据库
+    await systemMessage.save();
+
+    // 格式化消息
+    const formattedMessage = {
+      id: systemMessage._id,
+      type: 'system',
+      content,
+      createTime: systemMessage.createTime
+    };
+    console.log(`[系统消息] 系统消息已保存到数据库，消息ID: ${systemMessage._id}`);
+
+    // 返回消息对象，由调用者负责发送到房间
+    return {
+      success: true,
+      message: formattedMessage
+    };
+  } catch (error) {
+    console.error(`发送系统消息到房间${roomId}失败:`, error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+};

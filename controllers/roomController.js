@@ -832,10 +832,13 @@ exports.selectPlayer = asyncHandler(async (req, res) => {
         player: {
           userId: playerId,
           username: player.username,
+          avatar: player.avatar,
           teamId: parseInt(teamId)
         },
         nextTeamPick: result.nextTeam,
-        status: room.status
+        remainingPlayers: result.remainingPlayers.length,
+        status: room.status,
+        teams: room.teams
       },
       message: '队员选择成功'
     });
@@ -904,8 +907,8 @@ exports.selectSide = asyncHandler(async (req, res) => {
     await room.save();
 
     // 通知房间内所有玩家
-    if (socketHelper) {
-      socketHelper.safeNotifyRoom(roomId, 'team.selected_side', {
+    if (req.socketHelper) {
+      req.socketHelper.safeNotifyRoom(roomId, 'team.selected_side', {
         teamId: parseInt(teamId),
         side,
         teams: room.teams
@@ -914,7 +917,12 @@ exports.selectSide = asyncHandler(async (req, res) => {
 
     res.status(200).json({
       status: 'success',
-      data: { teams },
+      data: {
+        teams,
+        teamId: parseInt(teamId),
+        side,
+        status: room.status
+      },
       message: '阵营选择成功'
     });
   } catch (error) {

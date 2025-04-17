@@ -14,7 +14,9 @@ const MessageSchema = new mongoose.Schema({
   userId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true
+    required: function() {
+      return this.type !== 'system'; // 只有非系统消息才需要userId
+    }
   },
   content: {
     type: String,
@@ -62,4 +64,4 @@ MessageSchema.set('toJSON', {
   }
 });
 
-module.exports = mongoose.model('Message', MessageSchema); 
+module.exports = mongoose.model('Message', MessageSchema);

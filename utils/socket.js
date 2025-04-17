@@ -7,6 +7,7 @@ const socketIO = require('socket.io');
 const { verifySocketToken } = require('../middleware/auth');
 const User = require('../models/User');
 const Room = require('../models/Room');
+const socketHelper = require('./socketHelper');
 
 // 存储活跃连接的用户
 const activeUsers = new Map();
@@ -94,6 +95,9 @@ function initSocketServer(server) {
           return;
         }
 
+        // 打印用户信息
+        console.log(`用户 ${socket.userId} 尝试加入房间 ${roomId}`);
+
         // 查找房间
         const Room = require('../models/Room');
         const User = require('../models/User');
@@ -164,6 +168,17 @@ function initSocketServer(server) {
             messageTypes[msg.type] = (messageTypes[msg.type] || 0) + 1;
             messageChannels[msg.channel] = (messageChannels[msg.channel] || 0) + 1;
 
+            // 如果是系统消息，不需要用户信息
+            if (msg.type === 'system') {
+              return {
+                id: msg._id,
+                type: 'system',
+                content: msg.content,
+                createTime: msg.createTime
+              };
+            }
+
+            // 普通用户消息
             return {
               id: msg._id,
               userId: msg.userId._id,
@@ -289,6 +304,17 @@ function initSocketServer(server) {
           messageTypes[msg.type] = (messageTypes[msg.type] || 0) + 1;
           messageChannels[msg.channel] = (messageChannels[msg.channel] || 0) + 1;
 
+          // 如果是系统消息，不需要用户信息
+          if (msg.type === 'system') {
+            return {
+              id: msg._id,
+              type: 'system',
+              content: msg.content,
+              createTime: msg.createTime
+            };
+          }
+
+          // 普通用户消息
           return {
             id: msg._id,
             userId: msg.userId._id,
@@ -331,14 +357,11 @@ function initSocketServer(server) {
 
         console.log(`用户 ${socket.userId} 加入房间 ${roomId}`);
 
-        // 发送系统消息通知房间内其他用户
-        const systemMessage = {
-          type: 'system',
-          content: `${user.username} 加入了房间`,
-          createTime: new Date().toISOString()
-        };
-
-        notifyRoom(roomId, 'system_message', systemMessage, socket.userId);
+        // 发送系统消息通知房间内所有用户，并保存到数据库
+        const systemMessageResult = await socketHelper.sendSystemMessage(roomId, `${user.username} 加入了房间`);
+        if (systemMessageResult.success) {
+          notifyRoom(roomId, 'system_message', systemMessageResult.message);
+        }
       } catch (error) {
         console.error('加入房间失败:', error);
         socket.emit('error', { message: '加入房间失败: ' + error.message, code: 3002 });
@@ -426,6 +449,12 @@ function initSocketServer(server) {
         });
 
         console.log(`用户 ${socket.userId} 离开房间 ${roomId}`);
+
+        // 发送系统消息通知房间内所有用户，并保存到数据库
+        const systemMessageResult = await socketHelper.sendSystemMessage(roomId, `${user.username} 离开了房间`);
+        if (systemMessageResult.success) {
+          notifyRoom(roomId, 'system_message', systemMessageResult.message);
+        }
       } catch (error) {
         console.error('离开房间失败:', error);
         socket.emit('error', { message: '离开房间失败: ' + error.message, code: 3002 });
@@ -539,6 +568,12 @@ function initSocketServer(server) {
         });
 
         console.log(`用户 ${socket.userId} 从观众席加入玩家列表，房间 ${roomId}`);
+
+        // 发送系统消息通知房间内所有用户，并保存到数据库
+        const systemMessageResult = await socketHelper.sendSystemMessage(roomId, `${user.username} 从观众席加入了玩家列表`);
+        if (systemMessageResult.success) {
+          notifyRoom(roomId, 'system_message', systemMessageResult.message);
+        }
       } catch (error) {
         console.error('加入玩家列表失败:', error);
         socket.emit('error', { message: '加入玩家列表失败: ' + error.message, code: 3002 });
@@ -644,6 +679,12 @@ function initSocketServer(server) {
         });
 
         console.log(`用户 ${socket.userId} 从玩家列表加入观众席，房间 ${roomId}`);
+
+        // 发送系统消息通知房间内所有用户，并保存到数据库
+        const systemMessageResult = await socketHelper.sendSystemMessage(roomId, `${user.username} 从玩家列表加入了观众席`);
+        if (systemMessageResult.success) {
+          notifyRoom(roomId, 'system_message', systemMessageResult.message);
+        }
       } catch (error) {
         console.error('加入观众席失败:', error);
         socket.emit('error', { message: '加入观众席失败: ' + error.message, code: 3002 });
@@ -721,14 +762,75 @@ function initSocketServer(server) {
           socket.teamId = isPlayer ? player.teamId : null;
         }
 
+        // 获取房间历史聊天记录
+        console.log(`[聊天记录] 开始获取房间 ${roomId} 的历史聊天记录（getRoomDetail）`);
+        const Message = require('../models/Message');
+        const messages = await Message.find({ roomId })
+          .sort({ createTime: -1 })
+          .limit(50)
+          .populate('userId', 'username avatar')
+          .lean();
+
+        console.log(`[聊天记录] 从数据库获取到 ${messages.length} 条消息（getRoomDetail）`);
+
+        // 记录消息类型统计
+        const messageTypes = {};
+        const messageChannels = {};
+
+        // 格式化消息数据
+        const formattedMessages = messages.map(msg => {
+          // 统计消息类型
+          messageTypes[msg.type] = (messageTypes[msg.type] || 0) + 1;
+          messageChannels[msg.channel] = (messageChannels[msg.channel] || 0) + 1;
+
+          // 如果是系统消息，不需要用户信息
+          if (msg.type === 'system') {
+            return {
+              id: msg._id,
+              type: 'system',
+              content: msg.content,
+              createTime: msg.createTime
+            };
+          }
+
+          // 普通用户消息
+          return {
+            id: msg._id,
+            userId: msg.userId._id,
+            username: msg.userId.username,
+            avatar: msg.userId.avatar,
+            content: msg.content,
+            type: msg.type,
+            channel: msg.channel,
+            teamId: msg.teamId,
+            createTime: msg.createTime
+          };
+        }).reverse(); // 将消息按时间正序排列
+
+        console.log(`[聊天记录] 获取房间 ${roomId} 的历史消息，共 ${formattedMessages.length} 条（getRoomDetail）`);
+        console.log(`[聊天记录] 消息类型统计: ${JSON.stringify(messageTypes)}（getRoomDetail）`);
+        console.log(`[聊天记录] 消息频道统计: ${JSON.stringify(messageChannels)}（getRoomDetail）`);
+
+        // 打印前几条消息的摘要信息供调试
+        if (formattedMessages.length > 0) {
+          console.log(`[聊天记录] 最近消息摘要（getRoomDetail）:`);
+          const previewCount = Math.min(formattedMessages.length, 3);
+          for (let i = 0; i < previewCount; i++) {
+            const msg = formattedMessages[i];
+            const contentPreview = msg.content.length > 20 ? msg.content.substring(0, 20) + '...' : msg.content;
+            console.log(`  - [${new Date(msg.createTime).toLocaleString()}] ${msg.username}: ${contentPreview} (${msg.channel})`);
+          }
+        }
+
         // 格式化房间数据
         const formattedRoom = formatRoomData(room, rooms.get(roomId) || new Map());
 
-        // 返回房间详情，不包含聊天记录
+        // 返回房间详情，包含聊天记录
         callback({
           status: 'success',
           data: {
-            room: formattedRoom
+            room: formattedRoom,
+            messages: formattedMessages
           },
           message: '获取房间详情成功'
         });
@@ -742,6 +844,244 @@ function initSocketServer(server) {
           status: 'error',
           message: '获取房间详情失败: ' + error.message,
           code: 3002
+        });
+      }
+    });
+
+    // 队长选择队员
+    socket.on('captain.selectPlayer', async ({ roomId, teamId, playerId }, callback) => {
+      try {
+        if (!callback || typeof callback !== 'function') {
+          socket.emit('error', { message: '缺少回调函数', code: 3002 });
+          return;
+        }
+
+        if (!roomId || !teamId || !playerId) {
+          callback({
+            status: 'error',
+            message: '缺少必要参数',
+            code: 1001
+          });
+          return;
+        }
+
+        // 查找房间
+        const Room = require('../models/Room');
+        const User = require('../models/User');
+        const room = await Room.findById(roomId);
+
+        if (!room) {
+          callback({
+            status: 'error',
+            message: '房间不存在',
+            code: 3001
+          });
+          return;
+        }
+
+        // 检查房间状态
+        if (room.status !== 'picking') {
+          callback({
+            status: 'error',
+            message: '房间不在选人阶段',
+            code: 3003
+          });
+          return;
+        }
+
+        // 检查是否是队长
+        const captain = room.players.find(p =>
+          p.userId.toString() === socket.userId &&
+          p.teamId === parseInt(teamId) &&
+          p.isCaptain
+        );
+
+        if (!captain) {
+          callback({
+            status: 'error',
+            message: '只有队长可以选择队员',
+            code: 1003
+          });
+          return;
+        }
+
+        // 查看未分配的玩家数量
+        const unassignedPlayers = room.players.filter(p => p.teamId === null);
+
+        // 队长选择队员
+        const result = room.captainSelectPlayer(parseInt(teamId), playerId);
+
+        // 如果只剩最后一名队员，自动分配
+        if (unassignedPlayers.length === 2) { // 选择当前玩家后，将只剩1名未分配的玩家
+          const lastPlayer = room.players.find(p => p.teamId === null);
+          if (lastPlayer) {
+            // 根据pickMode决定分配给哪个队伍
+            if (room.pickMode === '12221') {
+              lastPlayer.teamId = 1; // 12221模式分配给蓝队
+            } else {
+              lastPlayer.teamId = 2; // 其他模式分配给红队
+            }
+            // 进入选边阶段
+            room.status = 'side_picking';
+            room.nextTeamPick = null;
+          }
+        }
+
+        await room.save();
+
+        // 获取被选择的玩家信息
+        const player = await User.findById(playerId, 'username avatar');
+
+        // 通知房间内所有玩家
+        notifyRoom(roomId, 'player.selected', {
+          userId: playerId,
+          username: player.username,
+          avatar: player.avatar,
+          teamId: parseInt(teamId),
+          nextTeamPick: result.nextTeam,
+          remainingPlayers: result.remainingPlayers.length
+        });
+
+        // 发送系统消息通知房间内所有用户，并保存到数据库
+        const teamName = parseInt(teamId) === 1 ? '蓝队' : '红队';
+        const systemMessageResult = await socketHelper.sendSystemMessage(roomId, `${player.username} 被选入${teamName}`);
+        if (systemMessageResult.success) {
+          notifyRoom(roomId, 'system_message', systemMessageResult.message);
+        }
+
+        // 如果自动分配了最后一名队员，也通知
+        if (unassignedPlayers.length === 2 && room.status === 'gaming') {
+          const lastPlayer = room.players.find(p => p.userId.toString() !== playerId);
+          const lastPlayerInfo = await User.findById(lastPlayer.userId, 'username avatar');
+
+          notifyRoom(roomId, 'player.selected', {
+            userId: lastPlayer.userId,
+            username: lastPlayerInfo.username,
+            avatar: lastPlayerInfo.avatar,
+            teamId: lastPlayer.teamId, // 使用实际分配的队伍ID
+            nextTeamPick: null,
+            remainingPlayers: 0,
+            isAutoAssigned: true
+          });
+        }
+
+        callback({
+          status: 'success',
+          data: {
+            player: {
+              userId: playerId,
+              username: player.username,
+              avatar: player.avatar,
+              teamId: parseInt(teamId)
+            },
+            nextTeamPick: result.nextTeam,
+            remainingPlayers: result.remainingPlayers.length,
+            status: room.status,
+            teams: room.teams
+          },
+          message: '队员选择成功'
+        });
+      } catch (error) {
+        console.error('队长选择队员失败:', error);
+        callback({
+          status: 'error',
+          message: error.message,
+          code: 3004
+        });
+      }
+    });
+
+    // 队长选择红蓝方
+    socket.on('captain.selectSide', async ({ roomId, teamId, side }, callback) => {
+      try {
+        if (!callback || typeof callback !== 'function') {
+          socket.emit('error', { message: '缺少回调函数', code: 3002 });
+          return;
+        }
+
+        if (!roomId || !teamId || !side) {
+          callback({
+            status: 'error',
+            message: '请提供队伍ID和阵营',
+            code: 1001
+          });
+          return;
+        }
+
+        // 查找房间
+        const Room = require('../models/Room');
+        const room = await Room.findById(roomId);
+
+        if (!room) {
+          callback({
+            status: 'error',
+            message: '房间不存在',
+            code: 3001
+          });
+          return;
+        }
+
+        // 检查房间状态
+        if (room.status !== 'gaming') {
+          callback({
+            status: 'error',
+            message: '房间不在游戏阶段',
+            code: 3003
+          });
+          return;
+        }
+
+        // 检查是否是队长
+        const captain = room.players.find(p =>
+          p.userId.toString() === socket.userId &&
+          p.teamId === parseInt(teamId) &&
+          p.isCaptain
+        );
+
+        if (!captain) {
+          callback({
+            status: 'error',
+            message: '只有队长可以选择阵营',
+            code: 1003
+          });
+          return;
+        }
+
+        // 选择阵营
+        const teams = room.selectSide(parseInt(teamId), side);
+        await room.save();
+
+        // 通知房间内所有玩家
+        notifyRoom(roomId, 'team.selected_side', {
+          teamId: parseInt(teamId),
+          side,
+          teams: room.teams
+        });
+
+        // 发送系统消息通知房间内所有用户，并保存到数据库
+        const teamName = parseInt(teamId) === 1 ? '蓝队' : '红队';
+        const sideName = side === 'blue' ? '蓝方' : '红方';
+        const systemMessageResult = await socketHelper.sendSystemMessage(roomId, `${teamName}选择了${sideName}，游戏即将开始`);
+        if (systemMessageResult.success) {
+          notifyRoom(roomId, 'system_message', systemMessageResult.message);
+        }
+
+        callback({
+          status: 'success',
+          data: {
+            teams,
+            teamId: parseInt(teamId),
+            side,
+            status: room.status
+          },
+          message: '阵营选择成功'
+        });
+      } catch (error) {
+        console.error('选择阵营失败:', error);
+        callback({
+          status: 'error',
+          message: error.message,
+          code: 3004
         });
       }
     });
@@ -875,8 +1215,10 @@ function initSocketServer(server) {
 
           // 获取房间在线用户数
           try {
-            const onlineUsers = getRoomOnlineUsers(roomId);
-            console.log(`[消息处理] 房间在线用户数: ${onlineUsers.length}, 用户列表: ${JSON.stringify(onlineUsers)}`);
+            if (rooms.has(roomId)) {
+              const onlineUsers = Array.from(rooms.get(roomId).keys());
+              console.log(`[消息处理] 房间在线用户数: ${onlineUsers.length}, 用户列表: ${JSON.stringify(onlineUsers)}`);
+            }
           } catch (error) {
             console.error(`[消息处理] 获取房间在线用户失败:`, error);
           }
@@ -907,7 +1249,7 @@ function initSocketServer(server) {
         return;
       }
 
-      const user = activeUsers.get(socket.userId);
+      // 获取用户角色
       const isSpectator = socket.role === 'spectator';
 
       // 向相关用户通知语音状态变更
@@ -955,6 +1297,15 @@ function initSocketServer(server) {
       });
 
       console.log(`用户 ${socket.userId} 开始语音通信`);
+
+      // 发送系统消息通知房间内所有用户，并保存到数据库
+      socketHelper.sendSystemMessage(roomId, `${socket.username} 开始了语音通信`).then(result => {
+        if (result.success) {
+          notifyRoom(roomId, 'system_message', result.message);
+        }
+      }).catch(err => {
+        console.error('发送语音开始系统消息失败:', err);
+      });
     });
 
     // 结束语音通信
@@ -964,7 +1315,7 @@ function initSocketServer(server) {
         return;
       }
 
-      const user = activeUsers.get(socket.userId);
+      // 获取用户角色
       const isSpectator = socket.role === 'spectator';
 
       // 向相关用户通知语音状态变更
@@ -1012,6 +1363,15 @@ function initSocketServer(server) {
       });
 
       console.log(`用户 ${socket.userId} 结束语音通信`);
+
+      // 发送系统消息通知房间内所有用户，并保存到数据库
+      socketHelper.sendSystemMessage(roomId, `${socket.username} 结束了语音通信`).then(result => {
+        if (result.success) {
+          notifyRoom(roomId, 'system_message', result.message);
+        }
+      }).catch(err => {
+        console.error('发送语音结束系统消息失败:', err);
+      });
     });
 
     // 处理语音数据
@@ -1138,6 +1498,16 @@ function initSocketServer(server) {
               // 通知房间内其他用户该用户已离开
               socket.to(roomId).emit('userLeft', {
                 userId: socket.userId
+              });
+
+              // 发送系统消息通知房间内所有用户，并保存到数据库
+              socketHelper.sendSystemMessage(roomId, `${socket.username} 断开了连接`).then(result => {
+                if (result.success) {
+                  // 使用io直接发送，因为用户已经断开连接，socket不可用
+                  io.to(roomId).emit('system_message', result.message);
+                }
+              }).catch(err => {
+                console.error('发送用户断开连接系统消息失败:', err);
               });
             }
           }
