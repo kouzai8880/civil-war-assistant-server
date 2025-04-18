@@ -2,6 +2,24 @@
 
 本文档详细说明了房间相关的Socket.IO事件，包括客户端可以发送的事件和需要监听的事件。通过正确处理这些事件，客户端可以与服务器保持实时同步，并提供流畅的用户体验。
 
+## 重要说明
+
+**当通过API创建房间成功后，必须使用Socket.IO连接到房间，才能正常使用实时功能。**
+
+```javascript
+// 当通过API创建房间成功后，需要立即调用joinRoom事件连接到房间
+axios.post('/api/v1/rooms', roomData).then(response => {
+  if (response.data.status === 'success') {
+    const roomId = response.data.data.room.id;
+
+    // 使用Socket.IO连接到房间
+    socket.emit('joinRoom', { roomId });
+  }
+});
+```
+
+创建房间API的响应中包含了`needSocketConnection: true`标志，提示前端需要连接Socket.IO。
+
 ## 目录
 
 - [客户端发送的事件](#客户端发送的事件)
@@ -27,11 +45,22 @@ socket.emit('joinRoom', {
 
 #### `leaveRoom`
 
-离开房间。
+离开房间。注意：只有在房间状态为`waiting`时，玩家才能离开房间。观众可以在任何状态下离开房间。
 
 ```javascript
 socket.emit('leaveRoom', {
   roomId: '房间ID'
+});
+```
+
+#### `kickPlayer`
+
+踢出玩家，只有房主可以踢出玩家。
+
+```javascript
+socket.emit('kickPlayer', {
+  roomId: '房间ID',
+  targetUserId: '要踢出的用户ID'
 });
 ```
 
@@ -56,7 +85,7 @@ socket.emit('getRoomDetail', { roomId: '房间ID' }, (response) => {
 
 #### `joinAsPlayer`
 
-从观众席加入玩家列表。
+从观众席加入玩家列表。注意：只有在房间状态为`waiting`时，才能从观众席加入玩家列表。
 
 ```javascript
 socket.emit('joinAsPlayer', {
@@ -67,7 +96,7 @@ socket.emit('joinAsPlayer', {
 
 #### `joinAsSpectator`
 
-从玩家列表加入观众席。
+从玩家列表加入观众席。注意：只有在房间状态为`waiting`时，才能从玩家列表加入观众席。
 
 ```javascript
 socket.emit('joinAsSpectator', {
@@ -183,23 +212,32 @@ socket.emit('sendMessage', {
 
 #### `roomJoined`
 
-成功加入房间后触发，包含完整的房间数据和历史聊天记录。
+成功加入房间后触发，包含完整的房间数据、历史聊天记录和语音房间用户列表。
 
 ```javascript
 socket.on('roomJoined', (response) => {
   // response: {
   //   status: 'success',
   //   data: {
-  //     room: {...},  // 房间详情
-  //     messages: [...]  // 历史聊天记录，最多50条，按时间正序排列
+  //     room: {
+  //       ...  // 房间基本信息
+  //       messages: [...],  // 历史聊天记录，最多50条，按时间正序排列
+  //       voiceChannels: {  // 语音房间用户列表
+  //         public: [...],  // 公共语音房间用户
+  //         team1: [...],   // 一队语音房间用户
+  //         team2: [...]    // 二队语音房间用户
+  //       }
+  //     }
   //   },
   //   message: '加入房间成功，已进入观众席'
   // }
   if (response.status === 'success') {
     const roomData = response.data.room;
-    const chatHistory = response.data.messages;
+    const chatHistory = roomData.messages;
+    const voiceChannels = roomData.voiceChannels;
     // 更新UI或状态管理
     // 显示历史聊天记录
+    // 显示语音房间用户
   }
 });
 ```
@@ -214,16 +252,25 @@ socket.emit('getRoomDetail', { roomId: '123456' }, (response) => {
   // response: {
   //   status: 'success',
   //   data: {
-  //     room: {...},  // 房间详情
-  //     messages: [...]  // 历史聊天记录，最多50条，按时间正序排列
+  //     room: {
+  //       ...  // 房间基本信息
+  //       messages: [...],  // 历史聊天记录，最多50条，按时间正序排列
+  //       voiceChannels: {  // 语音房间用户列表
+  //         public: [...],  // 公共语音房间用户
+  //         team1: [...],   // 一队语音房间用户
+  //         team2: [...]    // 二队语音房间用户
+  //       }
+  //     }
   //   },
   //   message: '获取房间详情成功'
   // }
   if (response.status === 'success') {
     const roomData = response.data.room;
-    const chatHistory = response.data.messages;
+    const chatHistory = roomData.messages;
+    const voiceChannels = roomData.voiceChannels;
     // 更新UI或状态管理
     // 显示历史聊天记录
+    // 显示语音房间用户
   }
 });
 ```
@@ -309,6 +356,53 @@ socket.on('player.left', (data) => {
 });
 ```
 
+#### `player.kicked`
+
+玩家被踢出房间时触发。
+
+```javascript
+// 被踢出的玩家会收到以下事件
+socket.on('player.kicked', (data) => {
+  // data: { roomId: '房间ID', kickedBy: '踢出者ID' }
+  // 更新UI，显示被踢出
+});
+
+// 房间内其他用户会收到以下事件
+socket.on('player.kicked', (data) => {
+  // data: { userId: '被踢出的用户ID', kickedBy: '踢出者ID' }
+  // 更新UI，移除被踢出的玩家
+});
+```
+
+#### `spectator.kicked`
+
+观众被踢出房间时触发。
+
+```javascript
+// 被踢出的观众会收到以下事件
+socket.on('spectator.kicked', (data) => {
+  // data: { roomId: '房间ID', kickedBy: '踢出者ID' }
+  // 更新UI，显示被踢出
+});
+
+// 房间内其他用户会收到以下事件
+socket.on('spectator.kicked', (data) => {
+  // data: { userId: '被踢出的用户ID', kickedBy: '踢出者ID' }
+  // 更新UI，移除被踢出的观众
+});
+```
+
+#### `kickPlayer.success`
+
+踢出玩家成功时触发。
+
+```javascript
+socket.on('kickPlayer.success', (data) => {
+  // data: { targetUserId: '被踢出的用户ID', message: '已踢出用户' }
+  // 更新UI，显示踢出成功
+});
+```
+
 ### 角色变更事件
 
 #### `spectator.moveToPlayer`
@@ -330,6 +424,44 @@ socket.on('spectator.moveToPlayer', (data) => {
 socket.on('player.moveToSpectator', (data) => {
   // data: { userId: '...', username: '...', avatar: '...', totalGames: number, wins: number, isCreator: boolean, roomId: '...' }
   // 从玩家列表移除该用户，并添加到观众列表
+});
+```
+
+#### `roleChanged`
+
+当用户角色发生变化时触发，包括房主身份变更、玩家和观众切换等。
+
+```javascript
+socket.on('roleChanged', (response) => {
+  // response: {
+  //   status: 'success',
+  //   data: {
+  //     room: {...},  // 房间完整数据，包含玩家、观众、语音房间等信息
+  //     role: 'player' | 'spectator',  // 新角色
+  //     userId: '用户ID',  // 角色变化的用户ID
+  //     isCreator: true  // 是否是房主
+  //   },
+  //   message: '用户A离开房间，用户B成为新房主'  // 变化描述
+  // }
+
+  if (response.status === 'success') {
+    // 更新房间数据
+    updateRoomData(response.data.room);
+
+    // 更新用户角色
+    if (response.data.userId === currentUserId) {
+      // 如果是当前用户的角色变化
+      updateMyRole(response.data.role);
+    }
+
+    // 如果是房主变更，更新房主标识
+    if (response.data.isCreator) {
+      updateRoomCreator(response.data.userId);
+    }
+
+    // 显示变化消息
+    showNotification(response.message);
+  }
 });
 ```
 
@@ -433,10 +565,11 @@ socket.on('teamUpdate', (data) => {
 
 #### `new_message`
 
-收到新消息时触发。注意：消息发送者不会收到自己发送的消息。
+收到新消息时触发，包括用户消息和系统消息。注意：消息发送者不会收到自己发送的消息。
 
 ```javascript
 socket.on('new_message', (message) => {
+  // 用户消息
   // message: {
   //   id: '消息ID',
   //   userId: '发送者ID',
@@ -449,24 +582,24 @@ socket.on('new_message', (message) => {
   //   createTime: '2023-05-01T12:00:00Z',
   //   isTeamMessage?: boolean  // 当队伍消息发送给观众时，此字段为true
   // }
-  // 显示新消息
-});
-```
-
-#### `system_message`
-
-收到系统消息时触发，如用户加入/离开房间、角色变更、语音状态变更等。
-
-```javascript
-socket.on('system_message', (message) => {
+  //
+  // 系统消息
   // message: {
   //   id: '消息ID', // 数据库中的消息ID
-  //   type: 'system', // 消息类型始终为'system'
+  //   type: 'system', // 消息类型为'system'
   //   content: '用户名 加入了房间', // 系统消息内容
   //   createTime: '2023-05-01T12:00:00Z', // 消息创建时间
   //   updateTime: '2023-05-01T12:00:00Z' // 消息发送时间
   // }
-  // 将系统消息添加到聊天列表，通常使用不同的样式显示
+
+  // 根据消息类型显示不同的消息样式
+  if (message.type === 'system') {
+    // 显示系统消息，通常使用不同的样式
+    displaySystemMessage(message);
+  } else {
+    // 显示用户消息
+    displayUserMessage(message);
+  }
 });
 ```
 
@@ -479,8 +612,9 @@ socket.on('system_message', (message) => {
 5. **用户加入观众席**：`用户名 从玩家列表加入了观众席`
 6. **用户被选入队伍**：`用户名 被选入蓝队/红队`
 7. **队伍选择阵营**：`蓝队/红队选择了蓝方/红方，游戏即将开始`
-8. **用户开始语音**：`用户名 开始了语音通信`
-9. **用户结束语音**：`用户名 结束了语音通信`
+8. **用户加入语音房间**：`用户名 加入了公共语音房间/一队语音房间/二队语音房间`
+9. **用户离开语音房间**：`用户名 离开了公共语音房间/一队语音房间/二队语音房间`
+10. **用户被踢出房间**：`用户名 被房主踢出了房间`
 
 ### 语音相关事件
 

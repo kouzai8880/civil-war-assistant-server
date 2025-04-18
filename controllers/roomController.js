@@ -46,11 +46,32 @@ exports.createRoom = asyncHandler(async (req, res) => {
   // 保存房间
   await room.save();
 
+  // 获取创建者信息
+  const User = require('../models/User');
+  const user = await User.findById(userId, 'username avatar stats.totalGames stats.wins gameId');
+
+  // 格式化玩家数据
+  const players = room.players.map(player => ({
+    userId: player.userId,
+    username: user.username,
+    avatar: user.avatar,
+    gameId: user.gameId,
+    totalGames: user.stats ? user.stats.totalGames : 0,
+    wins: user.stats ? user.stats.wins : 0,
+    teamId: player.teamId,
+    isCaptain: player.isCaptain,
+    isCreator: player.isCreator,
+    status: player.status,
+    joinTime: player.joinTime
+  }));
+
   // 格式化响应数据
   const formattedRoom = {
     id: room._id,
     name: room.name,
     creatorId: room.creatorId,
+    creatorName: user.username,
+    creatorAvatar: user.avatar,
     gameType: room.gameType,
     playerCount: room.playerCount,
     teamCount: room.teamCount,
@@ -59,21 +80,35 @@ exports.createRoom = asyncHandler(async (req, res) => {
     isPublic: room.isPublic,
     description: room.description,
     status: room.status,
-    players: room.players.map(player => ({
-      userId: player.userId,
-      isCreator: player.isCreator,
-      status: player.status,
-      joinTime: player.joinTime
-    })),
+    players,
     spectators: [],
     teams: [],
-    createTime: room.createTime
+    nextTeamPick: null,
+    createTime: room.createTime,
+    startTime: null,
+    endTime: null,
+    // 添加空的消息列表和语音房间数据，与 joinRoom 事件保持一致
+    messages: [],
+    voiceChannels: {
+      public: [],
+      team1: [],
+      team2: []
+    }
   };
+
+  // 通知所有客户端房间列表已更新
+  if (req.roomListNotifier) {
+    req.roomListNotifier.notifyRoomListUpdated('create', room._id.toString());
+  }
 
   res.status(201).json({
     status: 'success',
-    data: { room: formattedRoom },
-    message: '房间创建成功'
+    data: {
+      room: formattedRoom,
+      // 添加一个标志，告诉前端需要连接Socket.IO
+      needSocketConnection: true
+    },
+    message: '房间创建成功，请使用Socket.IO连接到房间'
   });
 });
 
@@ -94,7 +129,7 @@ exports.getRooms = asyncHandler(async (req, res) => {
   if (status && status !== 'all') {
     query.status = status;
   } else {
-    // 默认不显示已结束的房间
+    // 默认显示所有未结束的房间（包括 waiting 和 gaming）
     query.status = { $ne: 'ended' };
   }
 
@@ -1605,6 +1640,8 @@ exports.kickPlayer = asyncHandler(async (req, res) => {
   const roomId = req.params.roomId;
   const userId = req.user.id;
   const { targetUserId } = req.body;
+
+  console.log('roomId:', roomId, 'userId:', userId, 'targetUserId:', targetUserId);
 
   // 检查必要字段
   if (!targetUserId) {

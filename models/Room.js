@@ -299,18 +299,126 @@ RoomSchema.methods.moveSpectatorToPlayer = function (userId) {
 
 // 玩家离开的方法
 RoomSchema.methods.removePlayer = function (userId) {
-  const initialLength = this.players.length;
-  this.players = this.players.filter(p => p.userId.toString() !== userId.toString());
+  // 查找要移除的玩家
+  const playerIndex = this.players.findIndex(p => p.userId.toString() === userId.toString());
+  if (playerIndex === -1) {
+    return false; // 玩家不存在
+  }
 
-  return initialLength !== this.players.length;
+  const player = this.players[playerIndex];
+  const isCreator = player.isCreator;
+
+  // 移除玩家
+  this.players.splice(playerIndex, 1);
+
+  // 如果是创建者且房间中还有其他人，需要转移创建者权限
+  let newCreator = null;
+  if (isCreator) {
+    // 优先考虑玩家列表中的其他玩家
+    if (this.players.length > 0) {
+      // 找到加入时间最早的玩家
+      const earliestPlayer = this.players.reduce((earliest, p) => {
+        return p.joinTime < earliest.joinTime ? p : earliest;
+      }, this.players[0]);
+
+      // 转移创建者权限
+      earliestPlayer.isCreator = true;
+      this.creatorId = earliestPlayer.userId;
+      console.log(`玩家 ${userId} 离开房间，创建者权限转移给玩家 ${earliestPlayer.userId}`);
+
+      // 记录新房主信息
+      newCreator = {
+        userId: earliestPlayer.userId,
+        role: 'player',
+        previousRole: 'player'
+      };
+    }
+    // 如果玩家列表为空，但观众席有人
+    else if (this.spectators.length > 0) {
+      // 找到加入时间最早的观众
+      const earliestSpectator = this.spectators.reduce((earliest, s) => {
+        return s.joinTime < earliest.joinTime ? s : earliest;
+      }, this.spectators[0]);
+
+      // 转移创建者权限
+      earliestSpectator.isCreator = true;
+      this.creatorId = earliestSpectator.userId;
+      console.log(`玩家 ${userId} 离开房间，创建者权限转移给观众 ${earliestSpectator.userId}`);
+
+      // 记录新房主信息
+      newCreator = {
+        userId: earliestSpectator.userId,
+        role: 'spectator',
+        previousRole: 'spectator'
+      };
+    }
+    // 如果房间中没有其他人，则不需要转移权限
+  }
+
+  // 返回带有新房主信息的对象
+  return { success: true, newCreator };
 };
 
 // 观众离开的方法
 RoomSchema.methods.removeSpectator = function (userId) {
-  const initialLength = this.spectators.length;
-  this.spectators = this.spectators.filter(s => s.userId.toString() !== userId.toString());
+  // 查找要移除的观众
+  const spectatorIndex = this.spectators.findIndex(s => s.userId.toString() === userId.toString());
+  if (spectatorIndex === -1) {
+    return false; // 观众不存在
+  }
 
-  return initialLength !== this.spectators.length;
+  const spectator = this.spectators[spectatorIndex];
+  const isCreator = spectator.isCreator;
+
+  // 移除观众
+  this.spectators.splice(spectatorIndex, 1);
+
+  // 如果是创建者且房间中还有其他人，需要转移创建者权限
+  let newCreator = null;
+  if (isCreator) {
+    // 优先考虑玩家列表中的玩家
+    if (this.players.length > 0) {
+      // 找到加入时间最早的玩家
+      const earliestPlayer = this.players.reduce((earliest, p) => {
+        return p.joinTime < earliest.joinTime ? p : earliest;
+      }, this.players[0]);
+
+      // 转移创建者权限
+      earliestPlayer.isCreator = true;
+      this.creatorId = earliestPlayer.userId;
+      console.log(`观众 ${userId} 离开房间，创建者权限转移给玩家 ${earliestPlayer.userId}`);
+
+      // 记录新房主信息
+      newCreator = {
+        userId: earliestPlayer.userId,
+        role: 'player',
+        previousRole: 'player'
+      };
+    }
+    // 如果玩家列表为空，但观众席还有其他人
+    else if (this.spectators.length > 0) {
+      // 找到加入时间最早的观众
+      const earliestSpectator = this.spectators.reduce((earliest, s) => {
+        return s.joinTime < earliest.joinTime ? s : earliest;
+      }, this.spectators[0]);
+
+      // 转移创建者权限
+      earliestSpectator.isCreator = true;
+      this.creatorId = earliestSpectator.userId;
+      console.log(`观众 ${userId} 离开房间，创建者权限转移给观众 ${earliestSpectator.userId}`);
+
+      // 记录新房主信息
+      newCreator = {
+        userId: earliestSpectator.userId,
+        role: 'spectator',
+        previousRole: 'spectator'
+      };
+    }
+    // 如果房间中没有其他人，则不需要转移权限
+  }
+
+  // 返回带有新房主信息的对象
+  return { success: true, newCreator };
 };
 
 // 设置密码

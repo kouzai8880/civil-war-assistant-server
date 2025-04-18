@@ -4,13 +4,12 @@
  */
 
 const socketModule = require('./socket');
-
-// 初始化全局socketIO对象
-let socketIO = null;
+const socketShared = require('./socketShared');
 
 // 初始化方法
 exports.init = (io) => {
-  socketIO = io;
+  // 设置共享模块中的IO实例
+  socketShared.setIO(io);
   global.socketIO = socketModule;
 };
 
@@ -65,9 +64,7 @@ exports.safeNotifySpectators = (roomId, event, data) => {
 // 安全获取房间在线用户
 exports.safeGetRoomOnlineUsers = (roomId) => {
   try {
-    if (socketModule && typeof socketModule.getRoomOnlineUsers === 'function') {
-      return socketModule.getRoomOnlineUsers(roomId);
-    }
+    return socketShared.getRoomOnlineUsers(roomId);
   } catch (error) {
     console.error(`获取房间${roomId}在线用户失败:`, error);
   }
@@ -77,9 +74,7 @@ exports.safeGetRoomOnlineUsers = (roomId) => {
 // 安全获取房间在线观众
 exports.safeGetRoomSpectators = (roomId) => {
   try {
-    if (socketModule && typeof socketModule.getRoomSpectators === 'function') {
-      return socketModule.getRoomSpectators(roomId);
-    }
+    return socketShared.getRoomSpectators(roomId);
   } catch (error) {
     console.error(`获取房间${roomId}在线观众失败:`, error);
   }

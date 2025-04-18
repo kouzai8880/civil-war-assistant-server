@@ -12,6 +12,7 @@ const { errorHandler } = require('./middleware/errorHandler');
 const config = require('./config');
 const { initSocketServer } = require('./utils/socket');
 const socketHelper = require('./utils/socketHelper');
+const roomListNotifier = require('./utils/roomListNotifier');
 const lobby = require('./utils/lobby');
 const lobbyRoutes = require('./routes/lobby');
 
@@ -50,9 +51,13 @@ const io = initSocketServer(server);
 // 初始化socketHelper
 socketHelper.init(io);
 
-// 将socketHelper注入到req对象中
+// 初始化房间列表通知器
+roomListNotifier.init(io);
+
+// 将socketHelper和roomListNotifier注入到req对象中
 app.use((req, res, next) => {
   req.socketHelper = socketHelper;
+  req.roomListNotifier = roomListNotifier;
   next();
 });
 

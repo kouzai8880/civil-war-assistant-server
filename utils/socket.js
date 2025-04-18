@@ -8,11 +8,14 @@ const { verifySocketToken } = require('../middleware/auth');
 const User = require('../models/User');
 const Room = require('../models/Room');
 const socketHelper = require('./socketHelper');
+const socketShared = require('./socketShared');
 
-// 存储活跃连接的用户
-const activeUsers = new Map();
-// 存储房间信息
-const rooms = new Map();
+// 使用共享模块中的变量
+const activeUsers = socketShared.activeUsers;
+const rooms = socketShared.rooms;
+
+// 房间列表更新通知频道
+const ROOM_LIST_CHANNEL = 'roomList';
 
 // 存储用户的Socket连接
 const userSockets = new Map();
@@ -23,8 +26,7 @@ const roomSpectators = new Map();
 // 存储正在进行语音通话的用户
 const voiceUsers = new Map();
 
-// Socket.IO 实例
-let io = null;
+// 使用共享模块中的getIO函数获取io实例
 
 /**
  * 初始化Socket.IO服务
@@ -32,12 +34,15 @@ let io = null;
  * @returns {Object} Socket.IO服务器实例
  */
 function initSocketServer(server) {
-  io = socketIO(server, {
+  const io = socketIO(server, {
     cors: {
       origin: '*',
       methods: ['GET', 'POST']
     }
   });
+
+  // 设置共享模块中的IO实例
+  socketShared.setIO(io);
 
   // 中间件：验证用户身份
   io.use((socket, next) => {
@@ -84,7 +89,8 @@ function initSocketServer(server) {
       username: socket.username,
       teamId: socket.teamId,
       role: socket.role,
-      rooms: new Set()
+      rooms: new Set(),
+      voiceChannel: 'none' // 默认不在任何语音房间，可选值: 'none', 'public', 'team1', 'team2'
     });
 
     // 加入房间
@@ -126,7 +132,8 @@ function initSocketServer(server) {
             userId: socket.userId,
             username: socket.username,
             teamId: existingPlayer ? existingPlayer.teamId : null,
-            role: existingPlayer ? 'player' : 'spectator'
+            role: existingPlayer ? 'player' : 'spectator',
+            voiceChannel: 'none' // 默认不在任何语音房间
           });
 
           // 更新用户的房间列表
@@ -192,29 +199,39 @@ function initSocketServer(server) {
             };
           }).reverse(); // 将消息按时间正序排列
 
-          console.log(`[聊天记录] 获取房间 ${roomId} 的历史消息，共 ${formattedMessages.length} 条（重新连接）`);
-          console.log(`[聊天记录] 消息类型统计: ${JSON.stringify(messageTypes)}（重新连接）`);
-          console.log(`[聊天记录] 消息频道统计: ${JSON.stringify(messageChannels)}（重新连接）`);
+          // console.log(`[聊天记录] 获取房间 ${roomId} 的历史消息，共 ${formattedMessages.length} 条（重新连接）`);
+          // console.log(`[聊天记录] 消息类型统计: ${JSON.stringify(messageTypes)}（重新连接）`);
+          // console.log(`[聊天记录] 消息频道统计: ${JSON.stringify(messageChannels)}（重新连接）`);
 
           // 打印前几条消息的摘要信息供调试
-          if (formattedMessages.length > 0) {
-            console.log(`[聊天记录] 最近消息摘要（重新连接）:`);
-            const previewCount = Math.min(formattedMessages.length, 3);
-            for (let i = 0; i < previewCount; i++) {
-              const msg = formattedMessages[i];
-              const contentPreview = msg.content.length > 20 ? msg.content.substring(0, 20) + '...' : msg.content;
-              console.log(`  - [${new Date(msg.createTime).toLocaleString()}] ${msg.username}: ${contentPreview} (${msg.channel})`);
-            }
-          }
+          // if (formattedMessages.length > 0) {
+          //   console.log(`[聊天记录] 最近消息摘要（重新连接）:`);
+          //   const previewCount = Math.min(formattedMessages.length, 3);
+          //   for (let i = 0; i < previewCount; i++) {
+          //     const msg = formattedMessages[i];
+          //     const contentPreview = msg.content.length > 20 ? msg.content.substring(0, 20) + '...' : msg.content;
+          //     console.log(`  - [${new Date(msg.createTime).toLocaleString()}] ${msg.username}: ${contentPreview} (${msg.channel})`);
+          //   }
+          // }
 
           // 格式化房间数据
           const formattedRoom = formatRoomData(populatedRoom, roomUsers);
 
+          // 获取各语音房间的用户列表
+          const voiceChannels = {
+            public: getVoiceChannelUsers(roomId, 'public'),
+            team1: getVoiceChannelUsers(roomId, 'team1'),
+            team2: getVoiceChannelUsers(roomId, 'team2')
+          };
+
+          // 将消息和语音房间数据添加到房间结构中
+          formattedRoom.messages = formattedMessages;
+          formattedRoom.voiceChannels = voiceChannels;
+
           socket.emit('roomJoined', {
             status: 'success',
             data: {
-              room: formattedRoom,
-              messages: formattedMessages
+              room: formattedRoom
             },
             message: '重新连接房间成功'
           });
@@ -260,7 +277,8 @@ function initSocketServer(server) {
           username: socket.username,
           teamId: null,
           role: 'spectator',
-          isCreator: spectator.isCreator
+          isCreator: spectator.isCreator,
+          voiceChannel: 'none' // 默认不在任何语音房间
         });
 
         // 更新用户的房间列表
@@ -328,29 +346,28 @@ function initSocketServer(server) {
           };
         }).reverse(); // 将消息按时间正序排列
 
-        console.log(`[聊天记录] 获取房间 ${roomId} 的历史消息，共 ${formattedMessages.length} 条`);
-        console.log(`[聊天记录] 消息类型统计: ${JSON.stringify(messageTypes)}`);
-        console.log(`[聊天记录] 消息频道统计: ${JSON.stringify(messageChannels)}`);
-
-        // 打印前几条消息的摘要信息供调试
-        if (formattedMessages.length > 0) {
-          console.log(`[聊天记录] 最近消息摘要:`);
-          const previewCount = Math.min(formattedMessages.length, 3);
-          for (let i = 0; i < previewCount; i++) {
-            const msg = formattedMessages[i];
-            const contentPreview = msg.content.length > 20 ? msg.content.substring(0, 20) + '...' : msg.content;
-            console.log(`  - [${new Date(msg.createTime).toLocaleString()}] ${msg.username}: ${contentPreview} (${msg.channel})`);
-          }
-        }
+        // console.log(`[聊天记录] 获取房间 ${roomId} 的历史消息，共 ${formattedMessages.length} 条`);
+        // console.log(`[聊天记录] 消息类型统计: ${JSON.stringify(messageTypes)}`);
+        // console.log(`[聊天记录] 消息频道统计: ${JSON.stringify(messageChannels)}`);
 
         // 格式化房间数据
         const formattedRoom = formatRoomData(populatedRoom, roomUsers);
 
+        // 获取各语音房间的用户列表
+        const voiceChannels = {
+          public: getVoiceChannelUsers(roomId, 'public'),
+          team1: getVoiceChannelUsers(roomId, 'team1'),
+          team2: getVoiceChannelUsers(roomId, 'team2')
+        };
+
+        // 将消息和语音房间数据添加到房间结构中
+        formattedRoom.messages = formattedMessages;
+        formattedRoom.voiceChannels = voiceChannels;
+
         socket.emit('roomJoined', {
           status: 'success',
           data: {
-            room: formattedRoom,
-            messages: formattedMessages
+            room: formattedRoom
           },
           message: '加入房间成功，已进入观众席'
         });
@@ -360,7 +377,7 @@ function initSocketServer(server) {
         // 发送系统消息通知房间内所有用户，并保存到数据库
         const systemMessageResult = await socketHelper.sendSystemMessage(roomId, `${user.username} 加入了房间`);
         if (systemMessageResult.success) {
-          notifyRoom(roomId, 'system_message', systemMessageResult.message);
+          notifyRoom(roomId, 'new_message', systemMessageResult.message);
         }
       } catch (error) {
         console.error('加入房间失败:', error);
@@ -386,26 +403,93 @@ function initSocketServer(server) {
           return;
         }
 
+        // 检查房间状态，只有在waiting状态才能离开房间
+        if (room.status !== 'waiting') {
+          // 观众可以随时离开
+          const existingSpectator = room.spectators.find(s => s.userId.toString() === socket.userId);
+          if (!existingSpectator) {
+            socket.emit('error', {
+              message: '游戏已经开始，玩家不能离开房间',
+              code: 3004
+            });
+            return;
+          }
+        }
+
         // 检查用户是否在房间中
         const existingPlayer = room.players.find(p => p.userId.toString() === socket.userId);
         const existingSpectator = room.spectators.find(s => s.userId.toString() === socket.userId);
 
+        let removeResult;
         if (existingPlayer) {
           // 从玩家列表中移除用户
-          room.removePlayer(socket.userId);
+          removeResult = room.removePlayer(socket.userId);
         } else if (existingSpectator) {
           // 从观众席中移除用户
-          room.removeSpectator(socket.userId);
+          removeResult = room.removeSpectator(socket.userId);
         } else {
           // 用户不在房间中
           socket.emit('error', { message: '您不在该房间中', code: 3003 });
           return;
         }
 
-        await room.save();
-
         // 获取用户信息
         const user = await User.findById(socket.userId, 'username avatar');
+
+        // 如果有新房主，发送roleChanged事件
+        if (removeResult && removeResult.newCreator) {
+          // 获取新房主的用户信息
+          const newCreatorUser = await User.findById(removeResult.newCreator.userId, 'username avatar stats.totalGames stats.wins gameId');
+
+          if (newCreatorUser) {
+            // 获取房间详细信息
+            const populatedRoom = await Room.findById(roomId)
+              .populate('creatorId', 'username avatar')
+              .populate('players.userId', 'username avatar stats.totalGames stats.wins gameId')
+              .populate('spectators.userId', 'username avatar stats.totalGames stats.wins gameId')
+              .populate('teams.captainId', 'username avatar');
+
+            // 格式化房间数据
+            const formattedRoom = formatRoomData(populatedRoom, rooms.get(roomId) || new Map());
+
+            // 获取各语音房间的用户列表
+            const voiceChannels = {
+              public: getVoiceChannelUsers(roomId, 'public'),
+              team1: getVoiceChannelUsers(roomId, 'team1'),
+              team2: getVoiceChannelUsers(roomId, 'team2')
+            };
+
+            // 将消息和语音房间数据添加到房间结构中
+            formattedRoom.voiceChannels = voiceChannels;
+            formattedRoom.creatorName = removeResult.newCreator.role;
+            formattedRoom.creatorId = removeResult.newCreator.userId;
+            formattedRoom.creatorAvatar = newCreatorUser.avatar;
+
+            // 通知房间内所有用户房主已更改
+            socketShared.getIO().to(roomId).emit('roleChanged', {
+              status: 'success',
+              data: {
+                room: formattedRoom,
+                role: '',
+                userId: removeResult.newCreator.userId,
+                isCreator: true
+              },
+              message: `${user.username} 离开房间，${newCreatorUser.username} 成为新房主`
+            });
+
+            // 发送系统消息
+            const creatorChangeMessage = await socketHelper.sendSystemMessage(
+              roomId,
+              `${user.username} 离开房间，${newCreatorUser.username} 成为新房主`
+            );
+
+            if (creatorChangeMessage.success) {
+              socketShared.getIO().to(roomId).emit('new_message', creatorChangeMessage.message);
+            }
+          }
+        }
+
+        await room.save();
 
         // 将用户从房间中移除
         socket.leave(roomId);
@@ -415,9 +499,14 @@ function initSocketServer(server) {
           const roomUsers = rooms.get(roomId);
           roomUsers.delete(socket.userId);
 
-          // 如果房间中没有用户了，删除房间
+          // 如果房间中没有用户了，从内存中删除房间信息
           if (roomUsers.size === 0) {
             rooms.delete(roomId);
+            console.log(`房间 ${roomId} 没有在线用户了，从内存中删除房间信息`);
+
+            // 通知所有客户端房间列表已更新
+            const roomListNotifier = require('../utils/roomListNotifier');
+            roomListNotifier.notifyRoomListUpdated('update', roomId);
           }
         }
 
@@ -453,7 +542,7 @@ function initSocketServer(server) {
         // 发送系统消息通知房间内所有用户，并保存到数据库
         const systemMessageResult = await socketHelper.sendSystemMessage(roomId, `${user.username} 离开了房间`);
         if (systemMessageResult.success) {
-          notifyRoom(roomId, 'system_message', systemMessageResult.message);
+          notifyRoom(roomId, 'new_message', systemMessageResult.message);
         }
       } catch (error) {
         console.error('离开房间失败:', error);
@@ -476,6 +565,15 @@ function initSocketServer(server) {
 
         if (!room) {
           socket.emit('error', { message: '房间不存在', code: 3001 });
+          return;
+        }
+
+        // 检查房间状态，只有在waiting状态才能加入玩家列表
+        if (room.status !== 'waiting') {
+          socket.emit('error', {
+            message: '游戏已经开始，不能加入玩家列表',
+            code: 3004
+          });
           return;
         }
 
@@ -521,7 +619,8 @@ function initSocketServer(server) {
             username: socket.username,
             teamId: teamId,
             role: 'player',
-            isCreator: player.isCreator
+            isCreator: player.isCreator,
+            voiceChannel: 'none' // 默认不在任何语音房间
           });
           rooms.set(roomId, roomUsers);
         }
@@ -572,7 +671,7 @@ function initSocketServer(server) {
         // 发送系统消息通知房间内所有用户，并保存到数据库
         const systemMessageResult = await socketHelper.sendSystemMessage(roomId, `${user.username} 从观众席加入了玩家列表`);
         if (systemMessageResult.success) {
-          notifyRoom(roomId, 'system_message', systemMessageResult.message);
+          notifyRoom(roomId, 'new_message', systemMessageResult.message);
         }
       } catch (error) {
         console.error('加入玩家列表失败:', error);
@@ -595,6 +694,15 @@ function initSocketServer(server) {
 
         if (!room) {
           socket.emit('error', { message: '房间不存在', code: 3001 });
+          return;
+        }
+
+        // 检查房间状态，只有在waiting状态才能切换到观众席
+        if (room.status !== 'waiting') {
+          socket.emit('error', {
+            message: '游戏已经开始，不能切换到观众席',
+            code: 3004
+          });
           return;
         }
 
@@ -683,7 +791,7 @@ function initSocketServer(server) {
         // 发送系统消息通知房间内所有用户，并保存到数据库
         const systemMessageResult = await socketHelper.sendSystemMessage(roomId, `${user.username} 从玩家列表加入了观众席`);
         if (systemMessageResult.success) {
-          notifyRoom(roomId, 'system_message', systemMessageResult.message);
+          notifyRoom(roomId, 'new_message', systemMessageResult.message);
         }
       } catch (error) {
         console.error('加入观众席失败:', error);
@@ -807,30 +915,29 @@ function initSocketServer(server) {
           };
         }).reverse(); // 将消息按时间正序排列
 
-        console.log(`[聊天记录] 获取房间 ${roomId} 的历史消息，共 ${formattedMessages.length} 条（getRoomDetail）`);
-        console.log(`[聊天记录] 消息类型统计: ${JSON.stringify(messageTypes)}（getRoomDetail）`);
-        console.log(`[聊天记录] 消息频道统计: ${JSON.stringify(messageChannels)}（getRoomDetail）`);
-
-        // 打印前几条消息的摘要信息供调试
-        if (formattedMessages.length > 0) {
-          console.log(`[聊天记录] 最近消息摘要（getRoomDetail）:`);
-          const previewCount = Math.min(formattedMessages.length, 3);
-          for (let i = 0; i < previewCount; i++) {
-            const msg = formattedMessages[i];
-            const contentPreview = msg.content.length > 20 ? msg.content.substring(0, 20) + '...' : msg.content;
-            console.log(`  - [${new Date(msg.createTime).toLocaleString()}] ${msg.username}: ${contentPreview} (${msg.channel})`);
-          }
-        }
+        // console.log(`[聊天记录] 获取房间 ${roomId} 的历史消息，共 ${formattedMessages.length} 条（getRoomDetail）`);
+        // console.log(`[聊天记录] 消息类型统计: ${JSON.stringify(messageTypes)}（getRoomDetail）`);
+        // console.log(`[聊天记录] 消息频道统计: ${JSON.stringify(messageChannels)}（getRoomDetail）`);
 
         // 格式化房间数据
         const formattedRoom = formatRoomData(room, rooms.get(roomId) || new Map());
 
-        // 返回房间详情，包含聊天记录
+        // 获取各语音房间的用户列表
+        const voiceChannels = {
+          public: getVoiceChannelUsers(roomId, 'public'),
+          team1: getVoiceChannelUsers(roomId, 'team1'),
+          team2: getVoiceChannelUsers(roomId, 'team2')
+        };
+
+        // 将消息和语音房间数据添加到房间结构中
+        formattedRoom.messages = formattedMessages;
+        formattedRoom.voiceChannels = voiceChannels;
+
+        // 返回房间详情
         callback({
           status: 'success',
           data: {
-            room: formattedRoom,
-            messages: formattedMessages
+            room: formattedRoom
           },
           message: '获取房间详情成功'
         });
@@ -946,7 +1053,7 @@ function initSocketServer(server) {
         const teamName = parseInt(teamId) === 1 ? '蓝队' : '红队';
         const systemMessageResult = await socketHelper.sendSystemMessage(roomId, `${player.username} 被选入${teamName}`);
         if (systemMessageResult.success) {
-          notifyRoom(roomId, 'system_message', systemMessageResult.message);
+          notifyRoom(roomId, 'new_message', systemMessageResult.message);
         }
 
         // 如果自动分配了最后一名队员，也通知
@@ -1063,7 +1170,7 @@ function initSocketServer(server) {
         const sideName = side === 'blue' ? '蓝方' : '红方';
         const systemMessageResult = await socketHelper.sendSystemMessage(roomId, `${teamName}选择了${sideName}，游戏即将开始`);
         if (systemMessageResult.success) {
-          notifyRoom(roomId, 'system_message', systemMessageResult.message);
+          notifyRoom(roomId, 'new_message', systemMessageResult.message);
         }
 
         callback({
@@ -1242,136 +1349,319 @@ function initSocketServer(server) {
       }
     });
 
-    // 开始语音通信
-    socket.on('voiceStart', ({ roomId }) => {
+    // 加入语音房间
+    socket.on('joinVoiceChannel', async ({ roomId, channel }) => {
       if (!roomId || !rooms.has(roomId)) {
         socket.emit('error', { message: '无效的房间ID' });
         return;
       }
 
-      // 获取用户角色
-      const isSpectator = socket.role === 'spectator';
+      // 验证语音房间类型
+      if (!['public', 'team1', 'team2'].includes(channel)) {
+        socket.emit('error', { message: '无效的语音房间类型' });
+        return;
+      }
 
-      // 向相关用户通知语音状态变更
-      socket.rooms.forEach(room => {
-        if (room !== socket.id && room === roomId) {
-          // 如果是玩家，通知同队伍的玩家和所有观众
-          // 如果是观众，只通知其他观众
-          if (isSpectator) {
-            // 获取房间中的所有观众
-            const spectators = Array.from(rooms.get(roomId).values())
-              .filter(u => u.role === 'spectator' && u.userId !== socket.userId)
-              .map(u => activeUsers.get(u.userId))
-              .filter(u => u && u.socket);
+      // 获取用户信息
+      const user = activeUsers.get(socket.userId);
+      if (!user) {
+        socket.emit('error', { message: '用户未连接' });
+        return;
+      }
 
-            // 向其他观众通知
-            spectators.forEach(spectator => {
-              spectator.socket.emit('voiceStateUpdate', {
-                userId: socket.userId,
-                username: socket.username,
-                state: 'started'
-              });
-            });
-          } else {
-            // 获取房间中同队的玩家和所有观众
-            const roomUsers = Array.from(rooms.get(roomId).values());
-            const relevantUsers = roomUsers
-              .filter(u => (
-                // 同队伍玩家或观众，排除自己
-                (u.teamId === socket.teamId && u.role === 'player') ||
-                u.role === 'spectator'
-              ) && u.userId !== socket.userId)
-              .map(u => activeUsers.get(u.userId))
-              .filter(u => u && u.socket);
+      // 获取房间用户信息
+      const roomUsers = rooms.get(roomId);
+      const roomUser = roomUsers.get(socket.userId);
+      if (!roomUser) {
+        socket.emit('error', { message: '您不在该房间中' });
+        return;
+      }
 
-            // 向相关用户通知
-            relevantUsers.forEach(relevantUser => {
-              relevantUser.socket.emit('voiceStateUpdate', {
-                userId: socket.userId,
-                username: socket.username,
-                state: 'started'
-              });
-            });
+      // 如果用户已经在该语音房间中，则不做任何操作
+      if (roomUser.voiceChannel === channel) {
+        socket.emit('voiceChannelJoined', {
+          status: 'success',
+          data: { channel },
+          message: `您已经在${getChannelName(channel)}中`
+        });
+        return;
+      }
+
+      // 如果用户在其他语音房间中，先离开原来的语音房间
+      if (roomUser.voiceChannel !== 'none') {
+        // 通知原语音房间的其他用户
+        notifyVoiceChannelUsers(roomId, roomUser.voiceChannel, 'userLeftVoiceChannel', {
+          userId: socket.userId,
+          username: socket.username,
+          previousChannel: roomUser.voiceChannel,
+          newChannel: channel
+        }, socket.userId);
+
+        // 从数据库中获取用户信息，确保我们有正确的用户名
+        let username = socket.username || user.username || socket.userId || '未知用户';
+        try {
+          const User = require('../models/User');
+          const userDoc = await User.findById(socket.userId, 'username');
+          if (userDoc && userDoc.username) {
+            username = userDoc.username;
+            console.log(`从数据库中获取到用户名: ${username}`);
           }
+        } catch (error) {
+          console.error('从数据库中获取用户名失败:', error);
         }
+
+        // 发送系统消息
+        const systemMessageResult = await socketHelper.sendSystemMessage(roomId, `${username} 离开了${getChannelName(roomUser.voiceChannel)}`);
+        if (systemMessageResult.success) {
+          notifyRoom(roomId, 'new_message', systemMessageResult.message);
+        }
+      }
+
+      // 更新用户的语音房间
+      roomUser.voiceChannel = channel;
+      roomUsers.set(socket.userId, roomUser);
+      user.voiceChannel = channel;
+
+      // 通知新语音房间的其他用户
+      notifyVoiceChannelUsers(roomId, channel, 'userJoinedVoiceChannel', {
+        userId: socket.userId,
+        username: socket.username,
+        channel
+      }, socket.userId);
+
+      // 从数据库中获取用户信息，确保我们有正确的用户名
+      let username = socket.username || user.username || socket.userId || '未知用户';
+      try {
+        const User = require('../models/User');
+        const userDoc = await User.findById(socket.userId, 'username');
+        if (userDoc && userDoc.username) {
+          username = userDoc.username;
+          console.log(`从数据库中获取到用户名: ${username}`);
+        }
+      } catch (error) {
+        console.error('从数据库中获取用户名失败:', error);
+      }
+
+      // 发送系统消息
+      const systemMessageResult = await socketHelper.sendSystemMessage(roomId, `${username} 加入了${getChannelName(channel)}`);
+      if (systemMessageResult.success) {
+        notifyRoom(roomId, 'new_message', systemMessageResult.message);
+      }
+
+      // 向用户发送加入成功的消息
+      socket.emit('voiceChannelJoined', {
+        status: 'success',
+        data: { channel },
+        message: `加入${getChannelName(channel)}成功`
       });
 
-      console.log(`用户 ${socket.userId} 开始语音通信`);
-
-      // 发送系统消息通知房间内所有用户，并保存到数据库
-      socketHelper.sendSystemMessage(roomId, `${socket.username} 开始了语音通信`).then(result => {
-        if (result.success) {
-          notifyRoom(roomId, 'system_message', result.message);
-        }
-      }).catch(err => {
-        console.error('发送语音开始系统消息失败:', err);
+      // 向用户发送当前语音房间的其他用户列表
+      const channelUsers = getVoiceChannelUsers(roomId, channel);
+      socket.emit('voiceChannelUsers', {
+        channel,
+        users: channelUsers.filter(u => u.userId !== socket.userId)
       });
+
+      console.log(`用户 ${socket.userId} 加入了语音房间 ${channel}`);
     });
 
-    // 结束语音通信
-    socket.on('voiceEnd', ({ roomId }) => {
+    // 离开语音房间
+    socket.on('leaveVoiceChannel', async ({ roomId }) => {
       if (!roomId || !rooms.has(roomId)) {
         socket.emit('error', { message: '无效的房间ID' });
         return;
       }
 
-      // 获取用户角色
-      const isSpectator = socket.role === 'spectator';
+      // 获取用户信息
+      const user = activeUsers.get(socket.userId);
+      if (!user) {
+        socket.emit('error', { message: '用户未连接' });
+        return;
+      }
 
-      // 向相关用户通知语音状态变更
-      socket.rooms.forEach(room => {
-        if (room !== socket.id && room === roomId) {
-          // 如果是玩家，通知同队伍的玩家和所有观众
-          // 如果是观众，只通知其他观众
-          if (isSpectator) {
-            // 获取房间中的所有观众
-            const spectators = Array.from(rooms.get(roomId).values())
-              .filter(u => u.role === 'spectator' && u.userId !== socket.userId)
-              .map(u => activeUsers.get(u.userId))
-              .filter(u => u && u.socket);
+      // 获取房间用户信息
+      const roomUsers = rooms.get(roomId);
+      const roomUser = roomUsers.get(socket.userId);
+      if (!roomUser) {
+        socket.emit('error', { message: '您不在该房间中' });
+        return;
+      }
 
-            // 向其他观众通知
-            spectators.forEach(spectator => {
-              spectator.socket.emit('voiceStateUpdate', {
-                userId: socket.userId,
-                username: socket.username,
-                state: 'ended'
-              });
+      // 如果用户不在任何语音房间中，则不做任何操作
+      if (roomUser.voiceChannel === 'none') {
+        socket.emit('voiceChannelLeft', {
+          status: 'success',
+          message: '您已经不在任何语音房间中'
+        });
+        return;
+      }
+
+      // 保存当前的语音房间，用于通知其他用户
+      const previousChannel = roomUser.voiceChannel;
+
+      // 更新用户的语音房间
+      roomUser.voiceChannel = 'none';
+      roomUsers.set(socket.userId, roomUser);
+      user.voiceChannel = 'none';
+
+      // 通知原语音房间的其他用户
+      notifyVoiceChannelUsers(roomId, previousChannel, 'userLeftVoiceChannel', {
+        userId: socket.userId,
+        username: socket.username,
+        previousChannel
+      }, socket.userId);
+
+      // 从数据库中获取用户信息，确保我们有正确的用户名
+      let username = socket.username || user.username || socket.userId || '未知用户';
+      try {
+        const User = require('../models/User');
+        const userDoc = await User.findById(socket.userId, 'username');
+        if (userDoc && userDoc.username) {
+          username = userDoc.username;
+          console.log(`从数据库中获取到用户名: ${username}`);
+        }
+      } catch (error) {
+        console.error('从数据库中获取用户名失败:', error);
+      }
+
+      // 发送系统消息
+      const systemMessageResult = await socketHelper.sendSystemMessage(roomId, `${username} 离开了${getChannelName(previousChannel)}`);
+      if (systemMessageResult.success) {
+        notifyRoom(roomId, 'new_message', systemMessageResult.message);
+      }
+
+      // 向用户发送离开成功的消息
+      socket.emit('voiceChannelLeft', {
+        status: 'success',
+        message: `离开${getChannelName(previousChannel)}成功`
+      });
+
+      console.log(`用户 ${socket.userId} 离开了语音房间 ${previousChannel}`);
+    });
+
+    // 踢出玩家
+    socket.on('kickPlayer', async ({ roomId, targetUserId }) => {
+      if (!roomId || !rooms.has(roomId)) {
+        socket.emit('error', { message: '无效的房间ID' });
+        return;
+      }
+
+      if (!targetUserId) {
+        socket.emit('error', { message: '请提供要踢出的用户ID' });
+        return;
+      }
+
+      try {
+        // 查找房间
+        const Room = require('../models/Room');
+        const room = await Room.findById(roomId);
+
+        if (!room) {
+          socket.emit('error', { message: '房间不存在' });
+          return;
+        }
+
+        // 检查是否是房主
+        if (room.creatorId.toString() !== socket.userId) {
+          socket.emit('error', { message: '只有房主可以踢出玩家' });
+          return;
+        }
+
+        // 检查目标用户是否在房间中
+        const playerIndex = room.players.findIndex(p => p.userId.toString() === targetUserId);
+        const spectatorIndex = room.spectators.findIndex(s => s.userId.toString() === targetUserId);
+
+        if (playerIndex === -1 && spectatorIndex === -1) {
+          socket.emit('error', { message: '该用户不在房间中' });
+          return;
+        }
+
+        // 不能踢出自己
+        if (targetUserId === socket.userId) {
+          socket.emit('error', { message: '不能踢出自己' });
+          return;
+        }
+
+        // 从数据库中获取目标用户的用户名
+        const User = require('../models/User');
+        const targetUser = await User.findById(targetUserId, 'username');
+        if (!targetUser) {
+          socket.emit('error', { message: '目标用户不存在' });
+          return;
+        }
+
+        // 使用removeUser方法移除用户
+        const result = room.removeUser(targetUserId);
+
+        if (!result) {
+          socket.emit('error', { message: '踢出用户失败' });
+          return;
+        }
+
+        const { type: leaveType } = result;
+
+        // 保存房间
+        await room.save();
+
+        // 发送系统消息
+        const systemMessageResult = await socketHelper.sendSystemMessage(roomId, `${targetUser.username} 被房主踢出了房间`);
+        if (systemMessageResult.success) {
+          notifyRoom(roomId, 'new_message', systemMessageResult.message);
+        }
+
+        // 直接通知被踢出的用户
+        const targetSocket = Array.from(io.sockets.sockets.values()).find(s => s.userId === targetUserId);
+        if (targetSocket) {
+          if (leaveType === 'player') {
+            targetSocket.emit('player.kicked', {
+              roomId,
+              kickedBy: socket.userId
             });
           } else {
-            // 获取房间中同队的玩家和所有观众
-            const roomUsers = Array.from(rooms.get(roomId).values());
-            const relevantUsers = roomUsers
-              .filter(u => (
-                // 同队伍玩家或观众，排除自己
-                (u.teamId === socket.teamId && u.role === 'player') ||
-                u.role === 'spectator'
-              ) && u.userId !== socket.userId)
-              .map(u => activeUsers.get(u.userId))
-              .filter(u => u && u.socket);
-
-            // 向相关用户通知
-            relevantUsers.forEach(relevantUser => {
-              relevantUser.socket.emit('voiceStateUpdate', {
-                userId: socket.userId,
-                username: socket.username,
-                state: 'ended'
-              });
+            targetSocket.emit('spectator.kicked', {
+              roomId,
+              kickedBy: socket.userId
             });
           }
-        }
-      });
 
-      console.log(`用户 ${socket.userId} 结束语音通信`);
+          // 将用户从房间中移除
+          targetSocket.leave(roomId);
 
-      // 发送系统消息通知房间内所有用户，并保存到数据库
-      socketHelper.sendSystemMessage(roomId, `${socket.username} 结束了语音通信`).then(result => {
-        if (result.success) {
-          notifyRoom(roomId, 'system_message', result.message);
+          // 更新用户的房间列表
+          const targetUser = activeUsers.get(targetUserId);
+          if (targetUser) {
+            targetUser.rooms.delete(roomId);
+          }
+
+          // 从房间用户列表中移除
+          if (rooms.has(roomId)) {
+            const roomUsers = rooms.get(roomId);
+            roomUsers.delete(targetUserId);
+          }
         }
-      }).catch(err => {
-        console.error('发送语音结束系统消息失败:', err);
-      });
+
+        // 通知房间内其他用户
+        if (leaveType === 'player') {
+          notifyRoom(roomId, 'player.kicked', {
+            userId: targetUserId,
+            kickedBy: socket.userId
+          }, targetUserId);
+        } else {
+          notifyRoom(roomId, 'spectator.kicked', {
+            userId: targetUserId,
+            kickedBy: socket.userId
+          }, targetUserId);
+        }
+
+        // 发送成功响应
+        socket.emit('kickPlayer.success', {
+          targetUserId,
+          message: '已踢出用户'
+        });
+      } catch (error) {
+        console.error('踢出用户失败:', error);
+        socket.emit('error', { message: `踢出用户失败: ${error.message}` });
+      }
     });
 
     // 处理语音数据
@@ -1380,49 +1670,33 @@ function initSocketServer(server) {
         return;
       }
 
-      const isSpectator = socket.role === 'spectator';
+      // 获取用户信息
+      const user = activeUsers.get(socket.userId);
+      if (!user) return;
 
-      // 获取房间内的用户
-      if (rooms.has(roomId)) {
-        const roomUsers = Array.from(rooms.get(roomId).values());
+      // 获取房间用户信息
+      const roomUsers = rooms.get(roomId);
+      const roomUser = roomUsers.get(socket.userId);
+      if (!roomUser) return;
 
-        // 如果是观众发送的语音，只发给其他观众
-        if (isSpectator) {
-          const spectators = roomUsers
-            .filter(u => u.role === 'spectator' && u.userId !== socket.userId)
-            .map(u => activeUsers.get(u.userId))
-            .filter(u => u && u.socket);
+      // 如果用户不在任何语音房间中，则不发送语音数据
+      if (roomUser.voiceChannel === 'none') return;
 
-          // 向其他观众发送语音数据
-          spectators.forEach(spectator => {
-            spectator.socket.emit('voiceData', {
-              from: socket.userId,
-              username: socket.username,
-              data
-            });
-          });
-        }
-        // 如果是队伍成员发送的语音，发给同队成员和所有观众
-        else {
-          const relevantUsers = roomUsers
-            .filter(u =>
-              // 同队伍玩家或观众，排除自己
-              ((u.teamId === socket.teamId && u.role === 'player') || u.role === 'spectator') &&
-              u.userId !== socket.userId
-            )
-            .map(u => activeUsers.get(u.userId))
-            .filter(u => u && u.socket);
+      // 获取同一语音房间的其他用户
+      const channelUsers = Array.from(roomUsers.values())
+        .filter(u => u.voiceChannel === roomUser.voiceChannel && u.userId !== socket.userId)
+        .map(u => activeUsers.get(u.userId))
+        .filter(u => u && u.socket);
 
-          // 向相关用户发送语音数据
-          relevantUsers.forEach(user => {
-            user.socket.emit('voiceData', {
-              from: socket.userId,
-              username: socket.username,
-              data
-            });
-          });
-        }
-      }
+      // 向同一语音房间的其他用户发送语音数据
+      channelUsers.forEach(channelUser => {
+        channelUser.socket.emit('voiceData', {
+          from: socket.userId,
+          username: socket.username,
+          channel: roomUser.voiceChannel,
+          data
+        });
+      });
     });
 
     // 语音控制事件处理
@@ -1438,62 +1712,154 @@ function initSocketServer(server) {
         return;
       }
 
+      // 获取房间用户信息
+      const roomUsers = rooms.get(roomId);
+      const roomUser = roomUsers.get(socket.userId);
+      if (!roomUser) {
+        socket.emit('error', { message: '您不在该房间中' });
+        return;
+      }
+
+      // 如果用户不在任何语音房间中，则不做任何操作
+      if (roomUser.voiceChannel === 'none') {
+        socket.emit('error', { message: '您不在任何语音房间中' });
+        return;
+      }
+
       // 更新用户的静音状态
       user.isMuted = isMuted;
 
-      // 通知房间内相关用户
-      const roomData = rooms.get(roomId);
-      const isSpectator = socket.role === 'spectator';
-
-      if (isSpectator) {
-        // 如果是观众，只通知其他观众
-        const spectators = Array.from(roomData.values())
-          .filter(u => u.role === 'spectator' && u.userId !== socket.userId)
-          .map(u => activeUsers.get(u.userId))
-          .filter(u => u && u.socket);
-
-        spectators.forEach(spectator => {
-          spectator.socket.emit('voiceMuteUpdate', {
-            userId: socket.userId,
-            username: socket.username,
-            isMuted
-          });
-        });
-      } else {
-        // 如果是玩家，通知同队伍的玩家和所有观众
-        const relevantUsers = Array.from(roomData.values())
-          .filter(u => (
-            (u.teamId === socket.teamId && u.role === 'player' && u.userId !== socket.userId) ||
-            u.role === 'spectator'
-          ))
-          .map(u => activeUsers.get(u.userId))
-          .filter(u => u && u.socket);
-
-        relevantUsers.forEach(user => {
-          user.socket.emit('voiceMuteUpdate', {
-            userId: socket.userId,
-            username: socket.username,
-            isMuted
-          });
-        });
-      }
+      // 通知同一语音房间的其他用户
+      notifyVoiceChannelUsers(roomId, roomUser.voiceChannel, 'voiceMuteUpdate', {
+        userId: socket.userId,
+        username: socket.username,
+        channel: roomUser.voiceChannel,
+        isMuted
+      }, socket.userId);
 
       console.log(`用户 ${socket.userId} 在房间 ${roomId} 的静音状态更新为: ${isMuted}`);
     });
 
     // 断开连接
-    socket.on('disconnect', () => {
+    socket.on('disconnect', async () => {
       const user = activeUsers.get(socket.userId);
       if (user) {
+        // 从数据库中获取用户信息，确保我们有正确的用户名
+        let username = user.username || socket.userId || '未知用户';
+        try {
+          const User = require('../models/User');
+          const userDoc = await User.findById(socket.userId, 'username');
+          if (userDoc && userDoc.username) {
+            username = userDoc.username;
+            console.log(`从数据库中获取到用户名: ${username}`);
+          }
+        } catch (error) {
+          console.error('从数据库中获取用户名失败:', error);
+        }
+
         // 从所有房间中移除用户
-        user.rooms.forEach(roomId => {
+        for (const roomId of user.rooms) {
           if (rooms.has(roomId)) {
             const room = rooms.get(roomId);
             room.delete(socket.userId);
 
-            // 如果房间为空，删除房间
+            // 如果用户在语音房间中，先离开语音房间
+            const roomUser = room.get(socket.userId);
+            if (roomUser && roomUser.voiceChannel !== 'none') {
+              // 通知同一语音房间的其他用户
+              notifyVoiceChannelUsers(roomId, roomUser.voiceChannel, 'userLeftVoiceChannel', {
+                userId: socket.userId,
+                username,
+                previousChannel: roomUser.voiceChannel
+              }, socket.userId);
+
+              // 发送系统消息
+              const voiceSystemMessageResult = await socketHelper.sendSystemMessage(roomId, `${username} 离开了${getChannelName(roomUser.voiceChannel)}`);
+              if (voiceSystemMessageResult.success) {
+                socketShared.getIO().to(roomId).emit('new_message', voiceSystemMessageResult.message);
+              }
+            }
+
+            // 如果用户是房主，需要处理房主转移
+            if (roomUser && roomUser.isCreator) {
+              try {
+                const Room = require('../models/Room');
+                const dbRoom = await Room.findById(roomId);
+
+                if (dbRoom) {
+                  let removeResult;
+                  if (roomUser.role === 'player') {
+                    removeResult = dbRoom.removePlayer(socket.userId);
+                  } else if (roomUser.role === 'spectator') {
+                    removeResult = dbRoom.removeSpectator(socket.userId);
+                  }
+
+                  // 如果有新房主，发送roleChanged事件
+                  if (removeResult && removeResult.newCreator) {
+                    // 获取新房主的用户信息
+                    const User = require('../models/User');
+                    const newCreatorUser = await User.findById(removeResult.newCreator.userId, 'username avatar stats.totalGames stats.wins gameId');
+
+                    if (newCreatorUser) {
+                      // 获取房间详细信息
+                      const populatedRoom = await dbRoom.constructor.findById(roomId)
+                        .populate('creatorId', 'username avatar')
+                        .populate('players.userId', 'username avatar stats.totalGames stats.wins gameId')
+                        .populate('spectators.userId', 'username avatar stats.totalGames stats.wins gameId')
+                        .populate('teams.captainId', 'username avatar');
+
+                      // 格式化房间数据
+                      const formattedRoom = formatRoomData(populatedRoom, rooms.get(roomId) || new Map());
+
+                      // 获取各语音房间的用户列表
+                      const voiceChannels = {
+                        public: getVoiceChannelUsers(roomId, 'public'),
+                        team1: getVoiceChannelUsers(roomId, 'team1'),
+                        team2: getVoiceChannelUsers(roomId, 'team2')
+                      };
+
+                      // 将语音房间数据添加到房间结构中
+                      formattedRoom.voiceChannels = voiceChannels;
+
+                      // 通知房间内所有用户房主已更改
+                      socketShared.getIO().to(roomId).emit('roleChanged', {
+                        status: 'success',
+                        data: {
+                          room: formattedRoom,
+                          role: removeResult.newCreator.role,
+                          userId: removeResult.newCreator.userId,
+                          isCreator: true
+                        },
+                        message: `${username} 断开连接，${newCreatorUser.username} 成为新房主`
+                      });
+
+                      // 发送系统消息
+                      const creatorChangeMessage = await socketHelper.sendSystemMessage(
+                        roomId,
+                        `${username} 断开连接，${newCreatorUser.username} 成为新房主`
+                      );
+
+                      if (creatorChangeMessage.success) {
+                        socketShared.getIO().to(roomId).emit('new_message', creatorChangeMessage.message);
+                      }
+                    }
+                  }
+
+                  await dbRoom.save();
+                }
+              } catch (error) {
+                console.error(`处理房主断开连接时出错:`, error);
+              }
+            }
+
+            // 如果房间为空，从内存中删除房间信息
             if (room.size === 0) {
               rooms.delete(roomId);
+              console.log(`房间 ${roomId} 没有在线用户了，从内存中删除房间信息`);
+
+              // 通知所有客户端房间列表已更新
+              const roomListNotifier = require('../utils/roomListNotifier');
+              roomListNotifier.notifyRoomListUpdated('update', roomId);
             } else {
               // 通知房间内其他用户该用户已离开
               socket.to(roomId).emit('userLeft', {
@@ -1501,17 +1867,14 @@ function initSocketServer(server) {
               });
 
               // 发送系统消息通知房间内所有用户，并保存到数据库
-              socketHelper.sendSystemMessage(roomId, `${socket.username} 断开了连接`).then(result => {
-                if (result.success) {
-                  // 使用io直接发送，因为用户已经断开连接，socket不可用
-                  io.to(roomId).emit('system_message', result.message);
-                }
-              }).catch(err => {
-                console.error('发送用户断开连接系统消息失败:', err);
-              });
+              const systemMessageResult = await socketHelper.sendSystemMessage(roomId, `${username} 断开了连接`);
+              if (systemMessageResult.success) {
+                // 使用io直接发送，因为用户已经断开连接，socket不可用
+                socketShared.getIO().to(roomId).emit('new_message', systemMessageResult.message);
+              }
             }
           }
-        });
+        }
 
         // 从活跃用户列表中移除
         activeUsers.delete(socket.userId);
@@ -1522,6 +1885,50 @@ function initSocketServer(server) {
   });
 
   return io;
+}
+
+// 获取语音房间名称
+function getChannelName(channel) {
+  switch (channel) {
+    case 'public': return '公共语音房间';
+    case 'team1': return '一队语音房间';
+    case 'team2': return '二队语音房间';
+    default: return '未知语音房间';
+  }
+}
+
+// 获取语音房间的用户列表
+function getVoiceChannelUsers(roomId, channel) {
+  if (!roomId || !rooms.has(roomId)) return [];
+
+  return Array.from(rooms.get(roomId).values())
+    .filter(u => u.voiceChannel === channel)
+    .map(u => ({
+      userId: u.userId,
+      username: u.username,
+      teamId: u.teamId,
+      role: u.role
+    }));
+}
+
+// 通知语音房间的用户
+function notifyVoiceChannelUsers(roomId, channel, event, data, excludeUserId = null) {
+  if (!roomId || !rooms.has(roomId)) return false;
+
+  const roomUsers = rooms.get(roomId);
+  const channelUsers = Array.from(roomUsers.values())
+    .filter(u => u.voiceChannel === channel && u.userId !== excludeUserId)
+    .map(u => activeUsers.get(u.userId))
+    .filter(u => u && u.socket);
+
+  channelUsers.forEach(user => {
+    user.socket.emit(event, {
+      ...data,
+      updateTime: new Date().toISOString()
+    });
+  });
+
+  return true;
 }
 
 // 格式化房间数据
@@ -1613,7 +2020,7 @@ function emitRoomStatusUpdate(roomId, statusData) {
   }
 
   // 向房间内所有用户广播状态更新
-  io.to(roomId).emit('roomStatusUpdate', {
+  socketShared.getIO().to(roomId).emit('roomStatusUpdate', {
     roomId,
     ...statusData,
     updateTime: new Date().toISOString()
@@ -1627,7 +2034,7 @@ function emitPlayerStatusUpdate(roomId, userId, statusData) {
   }
 
   // 向房间内所有用户广播玩家状态更新
-  io.to(roomId).emit('playerStatusUpdate', {
+  socketShared.getIO().to(roomId).emit('playerStatusUpdate', {
     roomId,
     userId,
     ...statusData,
@@ -1642,7 +2049,7 @@ function emitTeamUpdate(roomId, teamId, teamData) {
   }
 
   // 向房间内所有用户广播队伍状态更新
-  io.to(roomId).emit('teamUpdate', {
+  socketShared.getIO().to(roomId).emit('teamUpdate', {
     roomId,
     teamId,
     ...teamData,
@@ -1654,13 +2061,13 @@ function emitTeamUpdate(roomId, teamId, teamData) {
 function notifyRoom(roomId, event, data, excludeUserId = null) {
   console.log(`[Socket通知] 准备向房间 ${roomId} 发送事件 ${event}${excludeUserId ? '，排除用户 ' + excludeUserId : ''}`);
 
-  if (!roomId || !io) {
+  if (!roomId || !socketShared.getIO()) {
     console.error(`[Socket通知] 房间ID无效或io实例不存在，无法发送事件 ${event}`);
     return false;
   }
 
   // 获取房间内的用户数量
-  const roomSize = io.sockets.adapter.rooms.get(roomId)?.size || 0;
+  const roomSize = socketShared.getIO().sockets.adapter.rooms.get(roomId)?.size || 0;
   console.log(`[Socket通知] 房间 ${roomId} 当前有 ${roomSize} 个连接`);
 
   const eventData = {
@@ -1676,12 +2083,12 @@ function notifyRoom(roomId, event, data, excludeUserId = null) {
       console.log(`[Socket通知] 已向房间 ${roomId} 中除用户 ${excludeUserId} 外的所有用户发送事件 ${event}`);
     } else {
       // 如果找不到要排除的用户的socket，则发送给所有人
-      io.to(roomId).emit(event, eventData);
+      socketShared.getIO().to(roomId).emit(event, eventData);
       console.log(`[Socket通知] 找不到用户 ${excludeUserId} 的socket，已向房间 ${roomId} 所有用户发送事件 ${event}`);
     }
   } else {
     // 如果不需要排除任何用户，则发送给房间内所有用户
-    io.to(roomId).emit(event, eventData);
+    socketShared.getIO().to(roomId).emit(event, eventData);
     console.log(`[Socket通知] 已向房间 ${roomId} 所有用户发送事件 ${event}`);
   }
 
@@ -1690,7 +2097,7 @@ function notifyRoom(roomId, event, data, excludeUserId = null) {
 
 // 通知特定用户
 function notifyUser(userId, event, data) {
-  if (!userId || !io) return false;
+  if (!userId || !socketShared.getIO()) return false;
   const userSocket = activeUsers.get(userId)?.socket;
   if (userSocket) {
     userSocket.emit(event, {
@@ -1706,7 +2113,7 @@ function notifyUser(userId, event, data) {
 function notifyTeam(roomId, teamId, event, data) {
   console.log(`[Socket通知] 准备向房间 ${roomId} 的队伍 ${teamId} 发送事件 ${event}`);
 
-  if (!roomId || !teamId || !io) {
+  if (!roomId || !teamId || !socketShared.getIO()) {
     console.error(`[Socket通知] 房间ID或队伍ID无效，无法发送队伍事件 ${event}`);
     return false;
   }
@@ -1741,7 +2148,7 @@ function notifyTeam(roomId, teamId, event, data) {
 function notifySpectators(roomId, event, data) {
   console.log(`[Socket通知] 准备向房间 ${roomId} 的观众发送事件 ${event}`);
 
-  if (!roomId || !io) {
+  if (!roomId || !socketShared.getIO()) {
     console.error(`[Socket通知] 房间ID无效，无法发送观众事件 ${event}`);
     return false;
   }
@@ -1773,24 +2180,14 @@ function notifySpectators(roomId, event, data) {
 }
 
 // 获取房间在线用户
-function getRoomOnlineUsers(roomId) {
-  if (!roomId || !rooms.has(roomId)) return [];
-  return Array.from(rooms.get(roomId).keys());
-}
-
-// 获取房间在线观众
-function getRoomSpectators(roomId) {
-  if (!roomId || !rooms.has(roomId)) return [];
-
-  return Array.from(rooms.get(roomId).entries())
-    .filter(([_, user]) => user.role === 'spectator')
-    .map(([userId, _]) => userId);
-}
+// 使用共享模块中的函数
+const getRoomOnlineUsers = socketShared.getRoomOnlineUsers;
+const getRoomSpectators = socketShared.getRoomSpectators;
 
 // 暴露状态更新函数，以便控制器使用
 module.exports = {
   initSocketServer,
-  getIO: () => io,
+  getIO: socketShared.getIO,
   emitRoomStatusUpdate,
   emitPlayerStatusUpdate,
   emitTeamUpdate,
@@ -1817,7 +2214,7 @@ module.exports = {
     }
 
     // 向房间内其他用户广播
-    io.to(roomId).emit('player.kicked', {
+    socketShared.getIO().to(roomId).emit('player.kicked', {
       userId,
       kickedBy,
       updateTime: new Date().toISOString()
@@ -1840,7 +2237,7 @@ module.exports = {
     }
 
     // 向房间内其他用户广播
-    io.to(roomId).emit('spectator.kicked', {
+    socketShared.getIO().to(roomId).emit('spectator.kicked', {
       userId,
       kickedBy,
       updateTime: new Date().toISOString()
