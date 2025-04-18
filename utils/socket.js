@@ -1351,13 +1351,17 @@ function initSocketServer(server) {
 
     // 加入语音房间
     socket.on('joinVoiceChannel', async ({ roomId, channel }) => {
+      console.log(`[语音房间] 用户 ${socket.userId} 请求加入房间 ${roomId} 的 ${channel} 语音频道`);
+
       if (!roomId || !rooms.has(roomId)) {
+        console.log(`[语音房间] 用户 ${socket.userId} 加入语音房间失败: 无效的房间ID ${roomId}`);
         socket.emit('error', { message: '无效的房间ID' });
         return;
       }
 
       // 验证语音房间类型
       if (!['public', 'team1', 'team2'].includes(channel)) {
+        console.log(`[语音房间] 用户 ${socket.userId} 加入语音房间失败: 无效的语音房间类型 ${channel}`);
         socket.emit('error', { message: '无效的语音房间类型' });
         return;
       }
@@ -1365,6 +1369,7 @@ function initSocketServer(server) {
       // 获取用户信息
       const user = activeUsers.get(socket.userId);
       if (!user) {
+        console.log(`[语音房间] 用户 ${socket.userId} 加入语音房间失败: 用户未连接`);
         socket.emit('error', { message: '用户未连接' });
         return;
       }
@@ -1373,12 +1378,18 @@ function initSocketServer(server) {
       const roomUsers = rooms.get(roomId);
       const roomUser = roomUsers.get(socket.userId);
       if (!roomUser) {
+        console.log(`[语音房间] 用户 ${socket.userId} 加入语音房间失败: 用户不在房间 ${roomId} 中`);
         socket.emit('error', { message: '您不在该房间中' });
         return;
       }
 
+      console.log(`[语音房间] 用户 ${socket.userId} 当前的语音房间状态: ${roomUser.voiceChannel}`);
+      console.log(`[语音房间] 房间 ${roomId} 的语音房间用户数量: public=${getVoiceChannelUsers(roomId, 'public').length}, team1=${getVoiceChannelUsers(roomId, 'team1').length}, team2=${getVoiceChannelUsers(roomId, 'team2').length}`);
+
+
       // 如果用户已经在该语音房间中，则不做任何操作
       if (roomUser.voiceChannel === channel) {
+        console.log(`[语音房间] 用户 ${socket.userId} 已经在房间 ${roomId} 的 ${channel} 语音频道中，不需要重新加入`);
         socket.emit('voiceChannelJoined', {
           status: 'success',
           data: { channel },
@@ -1389,6 +1400,12 @@ function initSocketServer(server) {
 
       // 如果用户在其他语音房间中，先离开原来的语音房间
       if (roomUser.voiceChannel !== 'none') {
+        console.log(`[语音房间] 用户 ${socket.userId} 先从房间 ${roomId} 的 ${roomUser.voiceChannel} 语音频道离开，然后加入 ${channel} 频道`);
+
+        // 获取原语音房间的其他用户数量
+        const previousChannelUsers = getVoiceChannelUsers(roomId, roomUser.voiceChannel).filter(u => u.userId !== socket.userId);
+        console.log(`[语音房间] 房间 ${roomId} 的 ${roomUser.voiceChannel} 频道有 ${previousChannelUsers.length} 个其他用户`);
+
         // 通知原语音房间的其他用户
         notifyVoiceChannelUsers(roomId, roomUser.voiceChannel, 'userLeftVoiceChannel', {
           userId: socket.userId,
@@ -1448,18 +1465,31 @@ function initSocketServer(server) {
         notifyRoom(roomId, 'new_message', systemMessageResult.message);
       }
 
-      // 向用户发送加入成功的消息
-      socket.emit('voiceChannelJoined', {
+      // // 向用户发送加入成功的消息
+      // socket.emit('voiceChannelJoined', {
+      //   status: 'success',
+      //   data: { channel },
+      //   message: `加入${getChannelName(channel)}成功`
+      // });
+
+      // 向房间内所有用户广播用户加入语音房间的事件
+      socketShared.getIO().to(roomId).emit('voiceChannelJoined', {
         status: 'success',
-        data: { channel },
-        message: `加入${getChannelName(channel)}成功`
+        data: {
+          userId: socket.userId,
+          username: username,
+          channel: channel,
+          teamId: roomUser.teamId,
+          role: roomUser.role
+        },
+        message: `${username} 加入了${getChannelName(channel)}`
       });
 
       // 向用户发送当前语音房间的其他用户列表
       const channelUsers = getVoiceChannelUsers(roomId, channel);
       socket.emit('voiceChannelUsers', {
         channel,
-        users: channelUsers.filter(u => u.userId !== socket.userId)
+        users: channelUsers
       });
 
       console.log(`用户 ${socket.userId} 加入了语音房间 ${channel}`);
@@ -1534,6 +1564,19 @@ function initSocketServer(server) {
       socket.emit('voiceChannelLeft', {
         status: 'success',
         message: `离开${getChannelName(previousChannel)}成功`
+      });
+
+      // 向房间内所有用户广播用户离开语音房间的事件
+      socketShared.getIO().to(roomId).emit('voiceChannelLeft', {
+        status: 'success',
+        data: {
+          userId: socket.userId,
+          username: username,
+          previousChannel: previousChannel,
+          teamId: roomUser.teamId,
+          role: roomUser.role
+        },
+        message: `${username} 离开了${getChannelName(previousChannel)}`
       });
 
       console.log(`用户 ${socket.userId} 离开了语音房间 ${previousChannel}`);
@@ -1668,6 +1711,11 @@ function initSocketServer(server) {
     socket.on('voiceData', ({ roomId, data }) => {
       if (!roomId || !rooms.has(roomId) || !data) {
         return;
+      }
+
+      // 每100个语音包记录一次日志，避免日志过多
+      if (Math.random() < 0.01) {
+        console.log(`[语音数据] 收到用户 ${socket.userId} 在房间 ${roomId} 的语音数据，大小: ${data.length} 字节`);
       }
 
       // 获取用户信息

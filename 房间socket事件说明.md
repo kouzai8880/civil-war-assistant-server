@@ -106,22 +106,23 @@ socket.emit('joinAsSpectator', {
 
 ### 语音通信
 
-#### `voiceStart`
+#### `joinVoiceChannel`
 
-开始语音通信。
+加入语音房间。
 
 ```javascript
-socket.emit('voiceStart', {
-  roomId: '房间ID'
+socket.emit('joinVoiceChannel', {
+  roomId: '房间ID',
+  channel: 'public' // 语音房间类型，可选值: 'public', 'team1', 'team2'
 });
 ```
 
-#### `voiceEnd`
+#### `leaveVoiceChannel`
 
-结束语音通信。
+离开语音房间。
 
 ```javascript
-socket.emit('voiceEnd', {
+socket.emit('leaveVoiceChannel', {
   roomId: '房间ID'
 });
 ```
@@ -134,6 +135,17 @@ socket.emit('voiceEnd', {
 socket.emit('voiceData', {
   roomId: '房间ID',
   data: voiceDataBuffer // 语音数据
+});
+```
+
+#### `voiceMute`
+
+设置静音状态。
+
+```javascript
+socket.emit('voiceMute', {
+  roomId: '房间ID',
+  isMuted: true // 是否静音
 });
 ```
 
@@ -462,6 +474,192 @@ socket.on('roleChanged', (response) => {
     // 显示变化消息
     showNotification(response.message);
   }
+});
+```
+
+### 语音相关事件
+
+#### `voiceChannelJoined`
+
+用户加入语音房间时触发。这个事件会发送给房间内的所有用户，包括加入语音房间的用户自己。
+
+```javascript
+// 当自己加入语音房间时收到的响应
+// 这个响应只发送给自己
+socket.on('voiceChannelJoined', (response) => {
+  // response: {
+  //   status: 'success',
+  //   data: { channel: 'public' },  // 加入的语音房间
+  //   message: '加入公共语音房间成功'
+  // }
+
+  if (response.status === 'success') {
+    // 更新UI，显示已加入语音房间
+    updateVoiceChannelUI(response.data.channel);
+  }
+});
+
+// 当房间内任何用户加入语音房间时收到的广播
+// 这个广播发送给房间内的所有用户
+socket.on('voiceChannelJoined', (response) => {
+  // response: {
+  //   status: 'success',
+  //   data: {
+  //     userId: '用户ID',
+  //     username: '用户名',
+  //     channel: 'public',  // 加入的语音房间
+  //     teamId: 1,  // 用户所在的队伍，如果有
+  //     role: 'player' | 'spectator'  // 用户角色
+  //   },
+  //   message: '用户A 加入了公共语音房间'
+  // }
+
+  if (response.status === 'success') {
+    // 更新UI，显示用户加入了语音房间
+    updateVoiceChannelUsers(response.data.channel, response.data.userId, true);
+    // 显示通知
+    showNotification(response.message);
+  }
+});
+```
+
+#### `voiceChannelLeft`
+
+用户离开语音房间时触发。这个事件会发送给房间内的所有用户，包括离开语音房间的用户自己。
+
+```javascript
+// 当自己离开语音房间时收到的响应
+// 这个响应只发送给自己
+socket.on('voiceChannelLeft', (response) => {
+  // response: {
+  //   status: 'success',
+  //   message: '离开公共语音房间成功'
+  // }
+
+  if (response.status === 'success') {
+    // 更新UI，显示已离开语音房间
+    updateVoiceChannelUI('none');
+  }
+});
+
+// 当房间内任何用户离开语音房间时收到的广播
+// 这个广播发送给房间内的所有用户
+socket.on('voiceChannelLeft', (response) => {
+  // response: {
+  //   status: 'success',
+  //   data: {
+  //     userId: '用户ID',
+  //     username: '用户名',
+  //     previousChannel: 'public',  // 离开的语音房间
+  //     teamId: 1,  // 用户所在的队伍，如果有
+  //     role: 'player' | 'spectator'  // 用户角色
+  //   },
+  //   message: '用户A 离开了公共语音房间'
+  // }
+
+  if (response.status === 'success') {
+    // 更新UI，显示用户离开了语音房间
+    updateVoiceChannelUsers(response.data.previousChannel, response.data.userId, false);
+    // 显示通知
+    showNotification(response.message);
+  }
+});
+```
+
+#### `voiceChannelUsers`
+
+当用户加入语音房间时，服务器会发送该语音房间的其他用户列表。
+
+```javascript
+socket.on('voiceChannelUsers', (data) => {
+  // data: {
+  //   channel: 'public',  // 语音房间
+  //   users: [  // 该语音房间的其他用户列表
+  //     {
+  //       userId: '用户ID',
+  //       username: '用户名',
+  //       teamId: 1,  // 用户所在的队伍，如果有
+  //       role: 'player' | 'spectator'  // 用户角色
+  //     }
+  //   ]
+  // }
+
+  // 更新UI，显示语音房间的其他用户
+  updateVoiceChannelUsersList(data.channel, data.users);
+});
+```
+
+#### `userJoinedVoiceChannel`
+
+当其他用户加入同一语音房间时触发。
+
+```javascript
+socket.on('userJoinedVoiceChannel', (data) => {
+  // data: {
+  //   userId: '用户ID',
+  //   username: '用户名',
+  //   channel: 'public',  // 语音房间
+  //   updateTime: '2023-05-01T12:00:00Z'  // 更新时间
+  // }
+
+  // 更新UI，显示新用户加入了语音房间
+  addVoiceChannelUser(data.channel, data);
+});
+```
+
+#### `userLeftVoiceChannel`
+
+当其他用户离开同一语音房间时触发。
+
+```javascript
+socket.on('userLeftVoiceChannel', (data) => {
+  // data: {
+  //   userId: '用户ID',
+  //   username: '用户名',
+  //   previousChannel: 'public',  // 离开的语音房间
+  //   newChannel: 'team1',  // 新加入的语音房间，如果有
+  //   updateTime: '2023-05-01T12:00:00Z'  // 更新时间
+  // }
+
+  // 更新UI，移除离开的用户
+  removeVoiceChannelUser(data.previousChannel, data.userId);
+});
+```
+
+#### `voiceData`
+
+接收其他用户发送的语音数据。
+
+```javascript
+socket.on('voiceData', (data) => {
+  // data: {
+  //   from: '发送者ID',
+  //   username: '发送者用户名',
+  //   channel: 'public',  // 语音房间
+  //   data: voiceDataBuffer  // 语音数据
+  // }
+
+  // 播放语音数据
+  playVoiceData(data.from, data.data);
+});
+```
+
+#### `voiceMuteUpdate`
+
+当其他用户更新静音状态时触发。
+
+```javascript
+socket.on('voiceMuteUpdate', (data) => {
+  // data: {
+  //   userId: '用户ID',
+  //   username: '用户名',
+  //   channel: 'public',  // 语音房间
+  //   isMuted: true,  // 是否静音
+  //   updateTime: '2023-05-01T12:00:00Z'  // 更新时间
+  // }
+
+  // 更新UI，显示用户的静音状态
+  updateUserMuteStatus(data.userId, data.isMuted);
 });
 ```
 
